@@ -97,7 +97,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   return (
     <div className="shrink-0">
       {dialog}
-      <div className="flex items-center h-9 px-4 bg-zinc-950/80 border-b border-white/5">
+      <div className="flex items-center h-9 px-4 bg-[#0c0c0c] border-b border-white/5">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className={`w-2 h-2 rounded-full ${statusDot[workspace.status] || 'bg-zinc-600'} shrink-0`} title={statusLabel[workspace.status]} />
           {editing ? (
@@ -271,7 +271,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
         </div>
       </div>
 
-      <div className="flex items-center h-8 px-3 bg-zinc-900/50 border-b border-white/5 overflow-x-auto no-scrollbar whitespace-nowrap">
+      <div className="flex items-center h-8 px-3 bg-[#0c0c0c] border-b border-white/5 overflow-x-auto no-scrollbar whitespace-nowrap">
         <div className="flex items-center gap-0.5 flex-1 min-w-max">
           {isLoading && (
             <div className="flex items-center gap-1.5 h-6 px-2 text-[11px] text-blue-400">

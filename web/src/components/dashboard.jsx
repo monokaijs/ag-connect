@@ -511,8 +511,8 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   );
 
   const sidebarContent = (
-    <div className="flex h-full w-full bg-[#181818] overflow-hidden">
-      <div className="w-12 shrink-0 flex flex-col items-center py-2 gap-2 bg-[#181818] border-r border-[#2a2a2a] z-10">
+    <div className="flex h-full w-full bg-[#0c0c0c] overflow-hidden">
+      <div className="w-12 shrink-0 flex flex-col items-center py-2 gap-2 bg-[#0c0c0c] border-r border-white/5 z-10">
         <button
           onClick={() => setActiveTab('explorer')}
           className={`p-2 rounded-md transition-colors ${activeTab === 'explorer' ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -528,7 +528,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
           <GitBranch className="w-[18px] h-[18px]" strokeWidth={2} />
         </button>
       </div>
-      <div className="flex-1 min-w-0 bg-[#181818]">
+      <div className="flex-1 min-w-0 bg-[#0c0c0c]">
         {activeTab === 'explorer' ? (
           <WorkspaceHostPanel workspace={workspace} ag={ag} onFileOpen={handleFileOpen} />
         ) : (
@@ -554,7 +554,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
         <PanelGroup direction="horizontal" className="h-full w-full flex">
           {showHostPanel && (
             <>
-              <Panel order={1} defaultSize={20} minSize={15} collapsible={true} className="flex min-w-0 border-r border-[#2a2a2a]">
+              <Panel order={1} defaultSize={20} minSize={15} collapsible={true} className="flex min-w-0 border-r border-white/5">
                 {sidebarContent}
               </Panel>
               <PanelResizeHandle className="w-1 bg-[#1a1a1a] hover:bg-zinc-600/50 transition-colors active:bg-zinc-600 cursor-col-resize shrink-0 z-10" />

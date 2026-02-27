@@ -104,7 +104,7 @@ export function WorkspaceHostPanel({ workspace, ag, onFileOpen }) {
 
   if (!workspace?.mountedPath) {
     return (
-      <div className="flex flex-col h-full bg-[#181818] w-full shrink-0 items-center justify-center text-center gap-3 px-6 overflow-hidden">
+      <div className="flex flex-col h-full bg-[#0c0c0c] w-full shrink-0 items-center justify-center text-center gap-3 px-6 overflow-hidden">
         <Folder className="w-8 h-8 text-zinc-600" />
         <p className="text-sm text-zinc-400">No Host Folder Mounted</p>
         <p className="text-[11px] text-zinc-500">Stop this workspace to configure a host location.</p>
@@ -113,8 +113,8 @@ export function WorkspaceHostPanel({ workspace, ag, onFileOpen }) {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#181818] w-full shrink-0 overflow-hidden">
-      <div className="px-3 py-2 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.2)] z-10 bg-[#181818]">
+    <div className="flex flex-col h-full bg-[#0c0c0c] w-full shrink-0 overflow-hidden">
+      <div className="px-3 py-2 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.2)] z-10 bg-[#0c0c0c]">
         EXPLORER
       </div>
       <div className="flex-1 overflow-y-auto no-scrollbar py-2">
