@@ -368,6 +368,22 @@ async function gpiEval(workspace, expression) {
   });
   if (!result.ok) return result;
   const val = result.results?.[0]?.value;
+
+  if (val?.error === 'no_csrf') {
+    console.log('[GPI] CSRF missing, auto-bootstrapping...');
+    const bootstrap = await gpiBootstrap(workspace);
+    if (bootstrap?.csrf) {
+      const retry = await cdpEvalOnPort(port, expression, {
+        target: 'workbench',
+        host: workspace.cdpHost,
+        timeout: 15000,
+      });
+      if (!retry.ok) return retry;
+      return retry.results?.[0]?.value || { ok: false, error: 'no_result_after_retry' };
+    }
+    return val;
+  }
+
   return val || { ok: false, error: 'no_result' };
 }
 
