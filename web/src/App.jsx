@@ -61,7 +61,7 @@ export default function App() {
         return viewMode === 'vnc' ? (
           <VncViewer workspaceId={activeWorkspace._id} ag={ag} />
         ) : (
-          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} />
+          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} />
         );
       case 'stopped':
         return <StoppedView workspace={activeWorkspace} onStart={() => startWorkspace(activeWorkspace._id)} />;
@@ -113,23 +113,9 @@ export default function App() {
               <div className="flex-1 overflow-hidden flex flex-col relative">
                 {renderContent()}
               </div>
-              {(showTerminal || showGit) && activeWorkspace?.status === 'running' && (
+              {showTerminal && activeWorkspace?.status === 'running' && (
                 <div className="shrink-0 border-t border-white/10" style={{ height: 280 }}>
-                  {showTerminal && showGit ? (
-                    <PanelGroup direction="horizontal" className="h-full">
-                      <Panel defaultSize={60} minSize={25} className="min-w-0">
-                        <TerminalPanel key={`${activeWorkspace._id}-${activeWorkspace.containerId}`} workspaceId={activeWorkspace._id} />
-                      </Panel>
-                      <PanelResizeHandle className="w-1 bg-zinc-900 hover:bg-blue-500/50 transition-colors active:bg-blue-500 cursor-col-resize shrink-0" />
-                      <Panel defaultSize={40} minSize={20} className="min-w-0">
-                        <GitPanel workspaceId={activeWorkspace._id} />
-                      </Panel>
-                    </PanelGroup>
-                  ) : showTerminal ? (
-                    <TerminalPanel key={`${activeWorkspace._id}-${activeWorkspace.containerId}`} workspaceId={activeWorkspace._id} />
-                  ) : (
-                    <GitPanel workspaceId={activeWorkspace._id} />
-                  )}
+                  <TerminalPanel key={`${activeWorkspace._id}-${activeWorkspace.containerId}`} workspaceId={activeWorkspace._id} />
                 </div>
               )}
             </div>

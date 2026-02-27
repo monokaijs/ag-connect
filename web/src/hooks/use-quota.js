@@ -1,38 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-
-import { API_BASE } from '../config';
+import { useState, useEffect } from 'react';
 
 export function useQuota(workspace, ws) {
   const [quota, setQuota] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const timerRef = useRef(null);
   const workspaceId = workspace?._id;
   const isRunning = workspace?.status === 'running';
   const hasAuth = !!workspace?.auth?.email;
 
-  const fetchQuota = useCallback(async () => {
-    if (!workspaceId || !isRunning || !hasAuth) return;
-    try {
-      setLoading(true);
-      const res = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/quota`);
-      const data = await res.json();
-      if (data.ok) {
-        setQuota(data);
-      }
-    } catch { }
-    setLoading(false);
-  }, [workspaceId, isRunning, hasAuth]);
-
   useEffect(() => {
     if (!isRunning || !hasAuth) {
       setQuota(null);
-      return;
     }
-
-    fetchQuota();
-    timerRef.current = setInterval(fetchQuota, 30000);
-    return () => clearInterval(timerRef.current);
-  }, [fetchQuota, isRunning, hasAuth]);
+  }, [isRunning, hasAuth]);
 
   useEffect(() => {
     if (!ws || !workspaceId) return;
@@ -54,5 +32,5 @@ export function useQuota(workspace, ws) {
     return () => ws.removeEventListener('message', handler);
   }, [ws, workspaceId]);
 
-  return { quota, loading, refetch: fetchQuota };
+  return { quota };
 }

@@ -110,6 +110,9 @@ app.get('/health', (req, res) => {
 });
 
 app.get('{*path}', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(join(__dirname, '..', 'web', 'dist', 'index.html'));
 });
 

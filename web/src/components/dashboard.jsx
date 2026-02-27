@@ -1,9 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ConversationItem } from '@/components/conversation-item';
 import { WorkspaceHostPanel } from '@/components/host-panel';
+import GitPanel from '@/components/git-panel';
+import { FilePreviewDialog } from '@/components/file-preview-dialog';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
+import { Virtuoso } from 'react-virtuoso';
 import {
   Zap,
   Send,
@@ -20,6 +23,7 @@ import {
   Wifi,
   WifiOff,
   GitBranch,
+  Folder,
 } from 'lucide-react';
 
 function getQuotaBarColor(pct) {
@@ -57,6 +61,19 @@ function StatusDot({ status }) {
     disconnected: 'bg-red-500',
   };
   return <div className={`h-2 w-2 rounded-full ${colors[status] || colors.disconnected}`} />;
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function ConversationPicker({ open, onClose, fetchConversations, selectConversation }) {
@@ -180,13 +197,10 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
                     </div>
                     <div className='flex items-center gap-2 shrink-0'>
                       {conv.time && (
-                        <span className='text-[10px] text-muted-foreground/50'>{conv.time}</span>
+                        <span className='text-[10px] text-muted-foreground/50'>{formatRelativeTime(conv.time)}</span>
                       )}
                       {switching === conv.title && (
                         <Loader2 className='h-3 w-3 animate-spin' />
-                      )}
-                      {conv.isCurrent && switching !== conv.title && (
-                        <div className='h-1.5 w-1.5 rounded-full bg-primary' />
                       )}
                     </div>
                   </button>
@@ -200,7 +214,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
   );
 }
 
-export default function Dashboard({ workspace, ag, showHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit }) {
+export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit }) {
   const { status, statusText, currentModel, isBusy, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -212,14 +226,28 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
   const [modelsLoading, setModelsLoading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [activeTab, setActiveTab] = useState('explorer');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+
+  const handleFileOpen = (fullPath) => {
+    if (!fullPath) return;
+    setPreviewFile(fullPath);
+  };
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (showGit) {
+      setActiveTab('git');
+      if (!showHostPanel) setShowHostPanel(true);
+    }
+  }, [showGit]);
 
   ag.openHistory = () => setPickerOpen(true);
 
@@ -235,7 +263,6 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
       setOptimisticItem(null);
     }
     prevItemCount.current = items.length;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [items, optimisticItem]);
 
   const resizeTextarea = useCallback(() => {
@@ -318,23 +345,33 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
 
   const isConnected = status === 'connected' || status === 'busy';
 
+  const allItems = useMemo(() => {
+    const result = [...items];
+    if (optimisticItem) result.push(optimisticItem);
+    return result;
+  }, [items, optimisticItem]);
+
   const chatContent = (
     <>
-      <div className='min-h-0 flex-1 overflow-y-auto'>
-        <div className='mx-auto max-w-3xl px-4 py-4'>
-          {items.length === 0 && !optimisticItem ? (
-            <div className='flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground'>
-              <MessageSquare className='h-10 w-10 stroke-1' />
-              <p className='text-sm'>Send a message or sync the IDE conversation</p>
-            </div>
-          ) : (
-            <>
-              {items.map((item, i) => <ConversationItem key={i} item={item} />)}
-              {optimisticItem && <ConversationItem key='optimistic' item={optimisticItem} />}
-            </>
-          )}
-          <div ref={bottomRef} />
-        </div>
+      <div className='min-h-0 flex-1 overflow-hidden'>
+        {allItems.length === 0 ? (
+          <div className='flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground h-full'>
+            <MessageSquare className='h-10 w-10 stroke-1' />
+            <p className='text-sm'>Send a message or sync the IDE conversation</p>
+          </div>
+        ) : (
+          <Virtuoso
+            data={allItems}
+            followOutput='smooth'
+            increaseViewportBy={{ top: 400, bottom: 200 }}
+            initialTopMostItemIndex={allItems.length - 1}
+            itemContent={(index, item) => (
+              <div className='mx-auto max-w-3xl px-4'>
+                <ConversationItem item={item} workspaceId={workspace._id} onFileOpen={handleFileOpen} />
+              </div>
+            )}
+          />
+        )}
       </div>
 
       <div className='shrink-0 px-4 py-3'>
@@ -348,9 +385,16 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
               <TerminalSquare className="w-3 h-3" />
             </button>
             <button
-              onClick={() => setShowGit(!showGit)}
+              onClick={() => {
+                if (activeTab === 'git' && showHostPanel) {
+                  setShowHostPanel(false);
+                } else {
+                  setActiveTab('git');
+                  setShowHostPanel(true);
+                }
+              }}
               title="Toggle Git"
-              className={`flex items-center gap-1 h-6 px-2 rounded font-medium transition-colors ${showGit ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+              className={`flex items-center gap-1 h-6 px-2 rounded font-medium transition-colors ${activeTab === 'git' && showHostPanel ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
             >
               <GitBranch className="w-3 h-3" />
             </button>
@@ -466,12 +510,40 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
     </>
   );
 
+  const sidebarContent = (
+    <div className="flex h-full w-full bg-[#181818] overflow-hidden">
+      <div className="w-12 shrink-0 flex flex-col items-center py-2 gap-2 bg-[#181818] border-r border-[#2a2a2a] z-10">
+        <button
+          onClick={() => setActiveTab('explorer')}
+          className={`p-2 rounded-md transition-colors ${activeTab === 'explorer' ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+          title="Explorer"
+        >
+          <Folder className="w-[18px] h-[18px]" strokeWidth={2} />
+        </button>
+        <button
+          onClick={() => setActiveTab('git')}
+          className={`p-2 rounded-md transition-colors ${activeTab === 'git' ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+          title="Source Control"
+        >
+          <GitBranch className="w-[18px] h-[18px]" strokeWidth={2} />
+        </button>
+      </div>
+      <div className="flex-1 min-w-0 bg-[#181818]">
+        {activeTab === 'explorer' ? (
+          <WorkspaceHostPanel workspace={workspace} ag={ag} onFileOpen={handleFileOpen} />
+        ) : (
+          <GitPanel workspaceId={workspace._id} />
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="h-full w-full overflow-hidden bg-background relative flex">
       {isMobile ? (
         showHostPanel ? (
           <div className="flex flex-col h-full w-full min-w-0">
-            <WorkspaceHostPanel workspace={workspace} ag={ag} />
+            {sidebarContent}
           </div>
         ) : (
           <div className="flex flex-col h-full w-full min-w-0 bg-[#0a0a0a]">
@@ -482,13 +554,13 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
         <PanelGroup direction="horizontal" className="h-full w-full flex">
           {showHostPanel && (
             <>
-              <Panel order={1} defaultSize={40} minSize={20} collapsible={true} className="flex min-w-0">
-                <WorkspaceHostPanel workspace={workspace} ag={ag} />
+              <Panel order={1} defaultSize={20} minSize={15} collapsible={true} className="flex min-w-0 border-r border-[#2a2a2a]">
+                {sidebarContent}
               </Panel>
-              <PanelResizeHandle className="w-1 bg-[#1a1a1a] hover:bg-blue-500/50 transition-colors active:bg-blue-500 cursor-col-resize shrink-0 z-10" />
+              <PanelResizeHandle className="w-1 bg-[#1a1a1a] hover:bg-zinc-600/50 transition-colors active:bg-zinc-600 cursor-col-resize shrink-0 z-10" />
             </>
           )}
-          <Panel order={2} defaultSize={showHostPanel ? 60 : 100} minSize={30} className="flex flex-col min-w-0 bg-[#0a0a0a]">
+          <Panel order={2} defaultSize={showHostPanel ? 80 : 100} minSize={30} className="flex flex-col min-w-0 bg-[#0a0a0a]">
             {chatContent}
           </Panel>
         </PanelGroup>
@@ -498,6 +570,12 @@ export default function Dashboard({ workspace, ag, showHostPanel, quota, showTer
         onClose={() => setPickerOpen(false)}
         fetchConversations={fetchConversations}
         selectConversation={selectConversation}
+      />
+      <FilePreviewDialog
+        open={!!previewFile}
+        fullPath={previewFile}
+        onClose={() => setPreviewFile(null)}
+        ag={ag}
       />
     </div>
   );

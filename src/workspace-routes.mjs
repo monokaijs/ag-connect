@@ -7,10 +7,20 @@ import {
   stopWorkspaceContainer,
   removeWorkspaceContainer,
   startWorkspaceContainer,
+  execInContainer,
 } from './docker-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
 import { getChatState } from './conversation-monitor.mjs';
 import { fetchWorkspaceQuota } from './quota.mjs';
+import {
+  gpiBootstrap,
+  gpiSendMessage,
+  gpiGetTrajectory,
+  gpiGetAllTrajectories,
+  gpiStartCascade,
+  gpiCancelInvocation,
+  trajectoryToConversation,
+} from './gpi.mjs';
 
 const HOST_BASE = process.env.HOST_BASE_PATH || '';
 const HOST_MOUNT = process.env.HOST_MOUNT_POINT || '';
@@ -22,7 +32,6 @@ function toLocalPath(hostPath) {
   }
   return hostPath;
 }
-
 
 async function wsEval(workspace, expression, opts = {}) {
   const port = workspace.cdpPort || workspace.ports?.debug;
@@ -135,7 +144,7 @@ function setupWorkspaceRoutes(app, broadcast) {
       setTimeout(async () => {
         try {
           await startWorkspaceContainer(workspace, broadcast);
-        } catch (e) { console.error(e) }
+        } catch (e) { console.error(e); }
       }, 0);
     }
   });
@@ -144,8 +153,6 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const workspace = await Workspace.findById(req.params.id);
       if (!workspace || !workspace.mountedPath) return res.json([]);
-      const fs = await import('fs/promises');
-      const path = await import('path');
       const base = toLocalPath(workspace.mountedPath);
       const sub = req.query.path || '';
       const target = path.join(base, sub);
@@ -158,7 +165,7 @@ function setupWorkspaceRoutes(app, broadcast) {
       const items = dirents.map(d => ({
         name: d.name,
         type: d.isDirectory() ? 'directory' : 'file',
-        path: path.join(sub, d.name)
+        path: path.join(sub, d.name),
       }));
       res.json(items.sort((a, b) => (b.type === 'directory') - (a.type === 'directory') || a.name.localeCompare(b.name)));
     } catch (err) {
@@ -170,8 +177,6 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const workspace = await Workspace.findById(req.params.id);
       if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const fs = await import('fs/promises');
-      const path = await import('path');
       const base = toLocalPath(workspace.mountedPath);
       const sub = req.query.path;
       if (!sub) return res.status(400).json({ error: 'Path required' });
@@ -189,8 +194,6 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const workspace = await Workspace.findById(req.params.id);
       if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const fs = await import('fs/promises');
-      const path = await import('path');
       const base = toLocalPath(workspace.mountedPath);
       const sub = req.body.path;
       const content = req.body.content;
@@ -209,8 +212,6 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const workspace = await Workspace.findById(req.params.id);
       if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const fs = await import('fs/promises');
-      const path = await import('path');
       const base = toLocalPath(workspace.mountedPath);
       const sub = req.body.path;
       if (!sub) return res.status(400).json({ error: 'Path required' });
@@ -237,6 +238,7 @@ function setupWorkspaceRoutes(app, broadcast) {
     res.json({ ok: true });
     startWorkspaceContainer(workspace, broadcast);
   });
+
   app.get('/api/workspaces/:id/cdp/chat', async (req, res) => {
     try {
       res.json(getChatState(req.params.id));
@@ -267,14 +269,13 @@ function setupWorkspaceRoutes(app, broadcast) {
       const { targetId } = req.body;
       if (!targetId) return res.status(400).json({ error: 'targetId required' });
 
-      const http = await import('http');
-
+      const httpMod = await import('http');
       await new Promise((resolve, reject) => {
-        const req = http.get(`http://${host}:${port}/json/close/${targetId}`, (res) => {
-          res.on('data', () => { });
-          res.on('end', resolve);
+        const r = httpMod.get(`http://${host}:${port}/json/close/${targetId}`, (response) => {
+          response.on('data', () => { });
+          response.on('end', resolve);
         });
-        req.on('error', reject);
+        r.on('error', reject);
       });
 
       res.json({ ok: true });
@@ -309,28 +310,39 @@ function setupWorkspaceRoutes(app, broadcast) {
     res.json({ logs: workspace.initLogs });
   });
 
+  app.post('/api/workspaces/:id/gpi/bootstrap', async (req, res) => {
+    try {
+      const workspace = await Workspace.findById(req.params.id);
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      const result = await gpiBootstrap(workspace);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/workspaces/:id/cdp/send', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     const text = req.body.text;
-    const escaped = JSON.stringify(text);
+    if (!text) return res.status(400).json({ ok: false, error: 'missing text' });
+
     try {
-      const result = await wsEval(workspace, `(async () => {
-        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
-        const editor = document.querySelector('[data-lexical-editor="true"][contenteditable="true"]') || document.querySelector('div[contenteditable="true"][role="textbox"]');
-        if (!editor) return { ok:false, error:"editor_not_found" };
-        editor.focus();
-        document.execCommand("selectAll", false, null);
-        document.execCommand("delete", false, null);
-        document.execCommand("insertText", false, ${escaped});
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        const submit = document.querySelector('svg.lucide-arrow-right')?.closest('button') || document.querySelector('[aria-label="Send Message"]');
-        if (submit && !submit.disabled) { submit.click(); return { ok:true, method:"click" }; }
-        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter", code:"Enter", keyCode:13 }));
-        return { ok:true, method:"enter" };
-      })()`, { target: 'workbench' });
-      res.json(result);
+      let cascadeId = workspace.gpi?.activeCascadeId;
+      if (!cascadeId) {
+        const newChat = await gpiStartCascade(workspace);
+        if (newChat.ok && newChat.data?.cascadeId) {
+          cascadeId = newChat.data.cascadeId;
+          await Workspace.findByIdAndUpdate(workspace._id, {
+            'gpi.activeCascadeId': cascadeId,
+          });
+        } else {
+          return res.json({ ok: false, error: 'failed_to_create_cascade', details: newChat });
+        }
+      }
+
+      const result = await gpiSendMessage(workspace, cascadeId, text);
+      res.json({ ok: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -340,12 +352,10 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const result = await wsEval(workspace, `(() => {
-        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (cancel && cancel.offsetParent !== null) { cancel.click(); return { ok: true }; }
-        return { ok: false, error: 'not_busy' };
-      })()`);
-      res.json(result);
+      const cascadeId = workspace.gpi?.activeCascadeId;
+      if (!cascadeId) return res.json({ ok: false, error: 'no_cascade' });
+      const result = await gpiCancelInvocation(workspace, cascadeId);
+      res.json({ ok: result.ok, results: [{ value: { ok: result.ok } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -378,11 +388,9 @@ function setupWorkspaceRoutes(app, broadcast) {
     const escaped = JSON.stringify(req.body.model);
     try {
       const result = await wsEval(workspace, `(() => {
-        // Find existing current model label
         const currentEl = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
         const btn = currentEl ? currentEl.closest('button, div[class*="cursor-"]') : null;
         if (btn) btn.click();
-        
         return new Promise(resolve => {
             setTimeout(() => {
                 const optionSpans = Array.from(document.querySelectorAll('span, div')).filter(s => {
@@ -444,13 +452,13 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const result = await wsEval(workspace, `(() => {
-        const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]') || document.querySelector('[aria-label*="New Chat"]') || document.querySelector('.new-chat-button') || Array.from(document.querySelectorAll('a, button')).find(b => b.textContent && b.textContent.includes('New Chat'));
-        if (!btn) return { ok: false, error: 'not_found' };
-        btn.click();
-        return { ok: true };
-      })()`, { target: 'workbench' });
-      res.json(result);
+      const result = await gpiStartCascade(workspace);
+      if (result.ok && result.data?.cascadeId) {
+        await Workspace.findByIdAndUpdate(workspace._id, {
+          'gpi.activeCascadeId': result.data.cascadeId,
+        });
+      }
+      res.json({ ok: result.ok, results: [{ value: { ok: result.ok, cascadeId: result.data?.cascadeId } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -460,76 +468,22 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const result = await wsEval(workspace, `(async () => {
-    let input = document.querySelector('input[placeholder="Select a conversation"]');
-    if (!input) {
-      const btn = document.querySelector('[data-tooltip-id="history-tooltip"]');
-      if (!btn) return { ok: false, error: 'no_history_btn' };
-      btn.click();
-      await new Promise(r => setTimeout(r, 100));
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 100));
-        input = document.querySelector('input[placeholder="Select a conversation"]');
-        if (input) break;
+      const result = await gpiGetAllTrajectories(workspace);
+      if (!result.ok) return res.json({ ok: false, error: 'failed', details: result });
+
+      const summaries = result.data?.trajectorySummaries || {};
+      const groups = [{ label: 'All Conversations', items: [] }];
+
+      for (const [cascadeId, traj] of Object.entries(summaries)) {
+        const title = traj.summary || cascadeId;
+        const active = cascadeId === workspace.gpi?.activeCascadeId;
+        const time = traj.lastModifiedTime || traj.createdTime || '';
+        groups[0].items.push({ title, time, active, cascadeId });
       }
-      if (!input) return { ok: false, error: 'dialog_timeout' };
-    }
 
-    const root = input.closest('div[tabindex]');
-    if (!root) return { ok: false, error: 'no_root' };
+      groups[0].items.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
 
-    const allDivs = root.querySelectorAll('div');
-    for (const el of allDivs) {
-      const t = (el.textContent || '').trim();
-      if (t.startsWith('Show ') && t.includes('more')) el.click();
-    }
-    await new Promise(r => setTimeout(r, 500));
-
-    const groups = [];
-    let currentGroup = null;
-    const seenTitles = new Set();
-
-    const walk = (el) => {
-      for (const child of el.children) {
-        const cls = child.className || '';
-        const text = (child.textContent || '').trim();
-
-        if (cls.includes('text-xs') && cls.includes('pt-4') && cls.includes('opacity-50') && text.length < 80) {
-          currentGroup = { label: text, items: [] };
-          groups.push(currentGroup);
-          continue;
-        }
-
-        if (cls.includes('cursor-pointer') && cls.includes('justify-between') && cls.includes('rounded-md')) {
-          const titleSpan = child.querySelector('.text-sm span');
-          const title = titleSpan ? titleSpan.textContent.trim() : '';
-          if (!title) continue;
-          const timeEl = child.querySelector('.ml-4');
-          const time = timeEl ? timeEl.textContent.trim() : '';
-          const active = cls.includes('focusBackground');
-          if (!currentGroup) {
-            currentGroup = { label: '', items: [] };
-            groups.push(currentGroup);
-          }
-          if (!seenTitles.has(title)) {
-            seenTitles.add(title);
-            currentGroup.items.push({ title, time, active });
-          }
-          continue;
-        }
-
-        if (child.children.length > 0) walk(child);
-      }
-    };
-
-    walk(root);
-
-    const btn = document.querySelector('[data-tooltip-id="history-tooltip"]');
-    if (btn) btn.click();
-
-    return { ok: true, groups: groups.filter(g => g.items.length > 0) };
-  })()`, { target: 'workbench' });
-      res.json(result);
+      res.json({ ok: true, results: [{ value: { ok: true, groups } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -538,48 +492,30 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/cdp/conversations/select', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    const escaped = JSON.stringify(req.body.title);
+    const { title, cascadeId } = req.body;
     try {
-      const result = await wsEval(workspace, `(async () => {
-    let input = document.querySelector('input[placeholder="Select a conversation"]');
-    if (!input) {
-      const btn = document.querySelector('[data-tooltip-id="history-tooltip"]');
-      if (!btn) return { ok: false, error: 'no_history_btn' };
-      btn.click();
-      await new Promise(r => setTimeout(r, 100));
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 100));
-        input = document.querySelector('input[placeholder="Select a conversation"]');
-        if (input) break;
+      let targetCascadeId = cascadeId;
+
+      if (!targetCascadeId && title) {
+        const result = await gpiGetAllTrajectories(workspace);
+        if (result.ok) {
+          const summaries = result.data?.trajectorySummaries || {};
+          for (const [cid, traj] of Object.entries(summaries)) {
+            if ((traj.summary || '') === title) {
+              targetCascadeId = cid;
+              break;
+            }
+          }
+        }
       }
-      if (!input) return { ok: false, error: 'dialog_timeout' };
-    }
 
-    const root = input.closest('div[tabindex]');
-    if (!root) return { ok: false, error: 'no_root' };
+      if (!targetCascadeId) return res.json({ ok: false, error: 'conversation_not_found' });
 
-    const allDivs = root.querySelectorAll('div');
-    for (const el of allDivs) {
-      const t = (el.textContent || '').trim();
-      if (t.startsWith('Show ') && t.includes('more')) el.click();
-    }
-    await new Promise(r => setTimeout(r, 500));
+      await Workspace.findByIdAndUpdate(workspace._id, {
+        'gpi.activeCascadeId': targetCascadeId,
+      });
 
-    const items = root.querySelectorAll('[class*="cursor-pointer"][class*="justify-between"][class*="rounded-md"]');
-    for (const item of items) {
-      const titleSpan = item.querySelector('.text-sm span');
-      const itemTitle = titleSpan ? titleSpan.textContent.trim() : '';
-      if (itemTitle === ${escaped}) {
-        item.click();
-        return { ok: true, selected: itemTitle };
-      }
-    }
-
-    const btn = document.querySelector('[data-tooltip-id="history-tooltip"]');
-    if (btn) btn.click();
-    return { ok: false, error: 'conversation_not_found' };
-  })()`, { target: 'workbench' });
-      res.json(result);
+      res.json({ ok: true, results: [{ value: { ok: true, selected: title || targetCascadeId } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -589,75 +525,14 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const result = await wsEval(workspace, `(() => {
-        const content = document.querySelector('.relative.flex.flex-col.gap-y-3.px-4');
-        if (!content) return null;
-        const allItems = [];
-        const groups = Array.from(content.children);
-        for (const g of groups) {
-          const kids = Array.from(g.children);
-          for (const kid of kids) {
-            const cls = typeof kid.className === 'string' ? kid.className : '';
-            const hasLexical = !!kid.querySelector('[data-lexical-editor]');
-            if (hasLexical) continue;
-            const hasAgentContainer = kid.querySelector('.space-y-2') || kid.querySelector('.leading-relaxed');
-            const isStatus = cls.includes('whitespace-nowrap') || cls.includes('transition-opacity');
-            if (!hasAgentContainer && !isStatus && kid.offsetHeight > 10) {
-              const clone = kid.cloneNode(true);
-              clone.querySelectorAll('.whitespace-nowrap, .transition-opacity, [class*="opacity"]').forEach(el => el.remove());
-              let text = (clone.textContent || '').trim();
-              ['Pending messages', 'Sending', 'Queued'].forEach(l => { text = text.replace(l, '').trim(); });
-              if (text) { allItems.push({ type: 'user', text: text.substring(0, 2000) }); continue; }
-            }
-            const container = cls.includes('space-y-2') ? kid : kid.querySelector('.space-y-2');
-            if (!container) continue;
-            const steps = Array.from(container.children);
-            for (const step of steps) {
-              const sCls = typeof step.className === 'string' ? step.className : '';
-              if (sCls.includes('my-2')) {
-                const btn = step.querySelector('button');
-                const btnText = btn ? (btn.textContent || '').trim() : '';
-                const isThinking = btn && (btnText.includes('Thought') || btnText.includes('Thinking'));
-                if (isThinking) {
-                  allItems.push({ type: 'thinking', text: btnText.substring(0, 200) || 'Thinking...' });
-                  const allMds = step.querySelectorAll('.leading-relaxed');
-                  const sib = btn.nextElementSibling;
-                  for (const md of allMds) {
-                    if (sib && sib.contains(md)) continue;
-                    const clone = md.cloneNode(true);
-                    clone.querySelectorAll('style').forEach(s => s.remove());
-                    const text = clone.textContent.substring(0, 3000);
-                    const html = md.innerHTML;
-                    if (text.trim()) allItems.push({ type: 'markdown', text, html });
-                  }
-                  continue;
-                }
-                const md = step.querySelector('.leading-relaxed');
-                if (md) {
-                  const clone = md.cloneNode(true);
-                  clone.querySelectorAll('style').forEach(s => s.remove());
-                  allItems.push({ type: 'markdown', text: clone.textContent.substring(0, 3000), html: md.innerHTML });
-                }
-                continue;
-              }
-              const cmdLabel = step.querySelector('.opacity-60');
-              const cmdText = cmdLabel ? (cmdLabel.textContent || '').trim() : '';
-              if (cmdLabel && (cmdText.includes('Ran') || cmdText.includes('Running') || cmdText.includes('Canceled'))) {
-                const pre = step.querySelector('pre') || step.querySelector('code');
-                allItems.push({ type: 'command', label: cmdText, code: pre ? pre.textContent.substring(0, 2000) : '' });
-                continue;
-              }
-              const text = (step.textContent || '').trim();
-              if (text) allItems.push({ type: 'tool', text: text.substring(0, 500) });
-            }
-          }
-        }
-        const statusEl = document.querySelector('.whitespace-nowrap.transition-opacity');
-        const statusText = statusEl ? (statusEl.textContent || '').trim() : '';
-        return { turnCount: allItems.length, items: allItems, statusText };
-      })()`, { target: 'workbench' });
-      const data = result?.results?.[0]?.value || null;
-      res.json(data || { turnCount: 0, items: [], statusText: '' });
+      const cascadeId = workspace.gpi?.activeCascadeId;
+      if (!cascadeId) return res.json({ turnCount: 0, items: [], statusText: '' });
+
+      const result = await gpiGetTrajectory(workspace, cascadeId);
+      if (!result.ok) return res.json({ turnCount: 0, items: [], statusText: '' });
+
+      const data = trajectoryToConversation(result.data);
+      res.json(data);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -672,7 +547,6 @@ function setupWorkspaceRoutes(app, broadcast) {
       const target = await findTargetOnPort(workspace.ports.debug, 'workbench');
       if (!target) return res.status(404).json({ error: 'cdp_not_found' });
 
-      // We need to implement a specialized connect operation for taking a screenshot
       const { WebSocket } = await import('ws');
       const ws = new WebSocket(target.wsUrl);
 
@@ -686,7 +560,7 @@ function setupWorkspaceRoutes(app, broadcast) {
           ws.send(JSON.stringify({
             id: 1,
             method: 'Page.captureScreenshot',
-            params: { format: 'png', quality: 80 }
+            params: { format: 'png', quality: 80 },
           }));
         });
 
@@ -725,6 +599,7 @@ function setupWorkspaceRoutes(app, broadcast) {
       res.json({ connected: false });
     }
   });
+
   const quotaCache = new Map();
   const QUOTA_CACHE_TTL = 10000;
 
@@ -779,6 +654,19 @@ function setupWorkspaceRoutes(app, broadcast) {
 
   setInterval(pollQuotas, 30000);
   setTimeout(pollQuotas, 5000);
+
+  app.get('/api/workspaces/:id/file', async (req, res) => {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Not found' });
+    const filePath = req.query.path;
+    if (!filePath) return res.status(400).json({ error: 'path required' });
+    try {
+      const result = await execInContainer(workspace.containerId, `cat ${JSON.stringify(filePath)}`);
+      res.json({ ok: true, content: result, path: filePath });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 export { setupWorkspaceRoutes };

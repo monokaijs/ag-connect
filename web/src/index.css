@@ -163,6 +163,11 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
+  .prose code::before,
+  .prose code::after {
+    content: none !important;
+  }
+
   a,
   button {
     @apply cursor-pointer;

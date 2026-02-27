@@ -25,6 +25,12 @@ const workspaceSchema = new mongoose.Schema({
   mountedPath: { type: String, default: '' },
   cdpHost: { type: String, default: '' },
   cdpPort: { type: Number, default: 0 },
+  gpi: {
+    csrfToken: { type: String, default: '' },
+    lsPort: { type: Number, default: 0 },
+    lsHost: { type: String, default: '' },
+    activeCascadeId: { type: String, default: '' },
+  },
   icon: { type: Number, default: -1 },
   color: { type: Number, default: 0 },
   initLogs: [String],
