@@ -3,7 +3,8 @@ import {
   Loader2, AlertCircle, LogIn, Play, Terminal,
   Plug, Package, Rocket, Hourglass, Lock, Syringe, RefreshCw, Settings, Zap, FolderOpen
 } from 'lucide-react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
+import { getAuthHeaders } from '../hooks/use-auth';
 import { FolderPickerDialog } from './folder-picker';
 
 const stageIcons = {
@@ -122,9 +123,9 @@ function StoppedView({ workspace, onStart }) {
   const handleStart = async () => {
     setSaving(true);
     if (path !== workspace.mountedPath) {
-      await fetch(`${API_BASE}/api/workspaces/${workspace._id}`, {
+      await fetch(`${getApiBase()}/api/workspaces/${workspace._id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ mountedPath: path })
       });
     }

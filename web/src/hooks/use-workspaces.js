@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-
-import { API_BASE, WS_BASE } from '../config';
+import { getApiBase, getWsBase } from '../config';
+import { getAuthToken, getAuthHeaders } from './use-auth';
 
 const GOOGLE_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -12,6 +12,11 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/experimentsandconfigs',
 ].join(' ');
 
+function authFetch(url, opts = {}) {
+  const headers = { ...getAuthHeaders(), ...(opts.headers || {}) };
+  return fetch(url, { ...opts, headers });
+}
+
 export function useWorkspaces() {
   const [workspaces, setWorkspaces] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -22,8 +27,12 @@ export function useWorkspaces() {
   const wsBackoff = useRef(2000);
 
   const connect = useCallback(() => {
+    const token = getAuthToken();
+    if (!token) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = WS_BASE ? `${WS_BASE}/api/ws` : `${protocol}://${window.location.host}/api/ws`;
+    const base = getWsBase() ? `${getWsBase()}/api/ws` : `${protocol}://${window.location.host}/api/ws`;
+    const wsUrl = `${base}?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -128,7 +137,7 @@ export function useWorkspaces() {
 
       setActiveId(workspaceId);
 
-      const res = await fetch(`${API_BASE}/api/oauth/exchange`, {
+      const res = await authFetch(`${getApiBase()}/api/oauth/exchange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, workspaceId, redirectUri }),
@@ -145,7 +154,8 @@ export function useWorkspaces() {
 
   const fetchWorkspaces = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/workspaces`);
+      const res = await authFetch(`${getApiBase()}/api/workspaces`);
+      if (res.status === 401) return;
       const data = await res.json();
       setWorkspaces(data);
       if (data.length > 0 && !activeId) {
@@ -157,7 +167,7 @@ export function useWorkspaces() {
   };
 
   const createWorkspace = async (name, mountedPath, icon, color) => {
-    const res = await fetch(`${API_BASE}/api/workspaces`, {
+    const res = await authFetch(`${getApiBase()}/api/workspaces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, mountedPath, icon, color }),
@@ -166,7 +176,7 @@ export function useWorkspaces() {
   };
 
   const updateWorkspace = async (id, data) => {
-    const res = await fetch(`${API_BASE}/api/workspaces/${id}`, {
+    const res = await authFetch(`${getApiBase()}/api/workspaces/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -175,23 +185,23 @@ export function useWorkspaces() {
   };
 
   const deleteWorkspace = async (id) => {
-    await fetch(`${API_BASE}/api/workspaces/${id}`, { method: 'DELETE' });
+    await authFetch(`${getApiBase()}/api/workspaces/${id}`, { method: 'DELETE' });
   };
 
   const stopWorkspace = async (id) => {
-    await fetch(`${API_BASE}/api/workspaces/${id}/stop`, { method: 'POST' });
+    await authFetch(`${getApiBase()}/api/workspaces/${id}/stop`, { method: 'POST' });
   };
 
   const startWorkspace = async (id) => {
-    await fetch(`${API_BASE}/api/workspaces/${id}/start`, { method: 'POST' });
+    await authFetch(`${getApiBase()}/api/workspaces/${id}/start`, { method: 'POST' });
   };
 
   const restartWorkspace = async (id) => {
-    await fetch(`${API_BASE}/api/workspaces/${id}/restart`, { method: 'POST' });
+    await authFetch(`${getApiBase()}/api/workspaces/${id}/restart`, { method: 'POST' });
   };
 
   const clearAuth = async (id) => {
-    await fetch(`${API_BASE}/api/workspaces/${id}/clear-auth`, { method: 'POST' });
+    await authFetch(`${getApiBase()}/api/workspaces/${id}/clear-auth`, { method: 'POST' });
   };
 
   const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -246,7 +256,7 @@ export function useWorkspaces() {
       setOauthPending(null);
       setActiveId(pendingWs);
 
-      const res = await fetch(`${API_BASE}/api/oauth/exchange`, {
+      const res = await authFetch(`${getApiBase()}/api/oauth/exchange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

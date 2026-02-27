@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "841333772682",
+    "project_id": "ag-connect-30107",
+    "storage_bucket": "ag-connect-30107.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:841333772682:android:9037597d33b54978fdb873",
+        "android_client_info": {
+          "package_name": "dev.creaton.agconnect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkLdEm3BVGiouZa3YtmsYNoyjKJvflzwg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { GitBranch, Plus, Minus, Check, Upload, Download, RefreshCw, Loader2, FileText, Clock, ChevronDown, ArrowUpDown } from 'lucide-react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
+import { getAuthHeaders } from '../hooks/use-auth';
 
 export default function GitPanel({ workspaceId }) {
   const [tab, setTab] = useState('changes');
@@ -15,7 +16,7 @@ export default function GitPanel({ workspaceId }) {
   const fetchStatus = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/git/status`);
+      const res = await fetch(`${getApiBase()}/api/workspaces/${workspaceId}/git/status`, { headers: getAuthHeaders() });
       const data = await res.json();
       setStatus(data);
     } catch { }
@@ -25,7 +26,7 @@ export default function GitPanel({ workspaceId }) {
   const fetchLog = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/git/log`);
+      const res = await fetch(`${getApiBase()}/api/workspaces/${workspaceId}/git/log`, { headers: getAuthHeaders() });
       const data = await res.json();
       setLog(data.commits || []);
     } catch { }
@@ -41,9 +42,9 @@ export default function GitPanel({ workspaceId }) {
     setActionLoading(action);
     setActionResult('');
     try {
-      const res = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/git/${action}`, {
+      const res = await fetch(`${getApiBase()}/api/workspaces/${workspaceId}/git/${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(body || {}),
       });
       const data = await res.json();

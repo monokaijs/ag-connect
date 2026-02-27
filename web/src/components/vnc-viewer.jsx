@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { wsProtocol, hostname, isDev } from '../config';
 import { Loader2, X, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getAuthToken } from '../hooks/use-auth';
 
 export function VncViewer({ workspaceId, ag }) {
   const [frame, setFrame] = useState(null);
@@ -40,7 +41,8 @@ export function VncViewer({ workspaceId, ag }) {
     setFrame(null);
     setError(null);
 
-    const wsUrl = `${isDev ? `${wsProtocol}//${hostname}:8787` : `${wsProtocol}//${window.location.host}`}/api/workspaces/${workspaceId}/cdp/vnc?targetId=${activeTargetId}`;
+    const token = getAuthToken();
+    const wsUrl = `${isDev ? `${wsProtocol}//${hostname}:8787` : `${wsProtocol}//${window.location.host}`}/api/workspaces/${workspaceId}/cdp/vnc?targetId=${activeTargetId}&token=${encodeURIComponent(token || '')}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

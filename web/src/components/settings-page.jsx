@@ -1,8 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Eye, EyeOff, Upload } from 'lucide-react';
-import { API_BASE } from '../config';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle } from 'lucide-react';
+import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
+import { getAuthHeaders } from '../hooks/use-auth';
+import { isNative } from '@/lib/capacitor';
 
-export default function SettingsPage() {
+function authFetch(url, opts = {}) {
+  const headers = { ...getAuthHeaders(), ...(opts.headers || {}) };
+  return fetch(url, { ...opts, headers });
+}
+
+export default function SettingsPage({ auth, push }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -11,22 +18,38 @@ export default function SettingsPage() {
   const [publicKey, setPublicKey] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [firebaseStatus, setFirebaseStatus] = useState(null);
+  const [serviceAccount, setServiceAccount] = useState('');
+  const [savingFirebase, setSavingFirebase] = useState(false);
+  const [firebaseError, setFirebaseError] = useState('');
+  const [showFirebaseForm, setShowFirebaseForm] = useState(false);
+
+  const [serverUrl, setServerUrl] = useState(getServerEndpoint() || '');
+
   const fetchKeys = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/settings/ssh-keys`);
+      const res = await authFetch(`${getApiBase()}/api/settings/ssh-keys`);
       const data = await res.json();
       setKeys(data);
     } catch { }
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+  const fetchFirebaseStatus = useCallback(async () => {
+    try {
+      const res = await authFetch(`${getApiBase()}/api/settings/firebase`);
+      const data = await res.json();
+      setFirebaseStatus(data);
+    } catch { }
+  }, []);
+
+  useEffect(() => { fetchKeys(); fetchFirebaseStatus(); }, [fetchKeys, fetchFirebaseStatus]);
 
   const addKey = async () => {
     if (!name.trim() || !privateKey.trim()) return;
     setSaving(true);
     try {
-      await fetch(`${API_BASE}/api/settings/ssh-keys`, {
+      await authFetch(`${getApiBase()}/api/settings/ssh-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), privateKey, publicKey }),
@@ -43,7 +66,7 @@ export default function SettingsPage() {
   const deleteKey = async (id) => {
     if (!confirm('Delete this SSH key?')) return;
     try {
-      await fetch(`${API_BASE}/api/settings/ssh-keys/${id}`, { method: 'DELETE' });
+      await authFetch(`${getApiBase()}/api/settings/ssh-keys/${id}`, { method: 'DELETE' });
       fetchKeys();
     } catch { }
   };
@@ -56,11 +79,214 @@ export default function SettingsPage() {
     reader.readAsText(file);
   };
 
+  const saveFirebase = async () => {
+    if (!serviceAccount.trim()) return;
+    setSavingFirebase(true);
+    setFirebaseError('');
+    try {
+      const res = await authFetch(`${getApiBase()}/api/settings/firebase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceAccount: serviceAccount.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFirebaseError(data.error || 'Failed to save');
+      } else {
+        setServiceAccount('');
+        setShowFirebaseForm(false);
+        fetchFirebaseStatus();
+      }
+    } catch {
+      setFirebaseError('Network error');
+    }
+    setSavingFirebase(false);
+  };
+
+  const removeFirebase = async () => {
+    if (!confirm('Remove Firebase configuration? Push notifications will stop working.')) return;
+    try {
+      await authFetch(`${getApiBase()}/api/settings/firebase`, { method: 'DELETE' });
+      fetchFirebaseStatus();
+    } catch { }
+  };
+
+  const saveServerUrl = () => {
+    const cleaned = serverUrl.trim().replace(/\/+$/, '');
+    if (cleaned) {
+      setServerEndpoint(cleaned);
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-y-auto">
       <div className="max-w-2xl mx-auto w-full p-6">
         <h1 className="text-lg font-semibold text-white mb-1">Settings</h1>
         <p className="text-xs text-zinc-500 mb-6">Manage your AG Connect configuration</p>
+
+        {auth?.user && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <User className="w-4 h-4 text-zinc-400" />
+              <h2 className="text-sm font-medium text-white">Account</h2>
+            </div>
+            <div className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}>
+                  {auth.user.username?.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-white">{auth.user.username}</div>
+                  <div className="text-[10px] text-zinc-500">Administrator</div>
+                </div>
+              </div>
+              <button
+                onClick={() => { if (confirm('Sign out of AG Connect?')) auth.logout(); }}
+                className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg border border-red-500/20 transition-colors"
+              >
+                <LogOut className="w-3 h-3" />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isNative && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <Server className="w-4 h-4 text-zinc-400" />
+              <h2 className="text-sm font-medium text-white">Server</h2>
+            </div>
+            <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
+              <label className="block text-[11px] font-medium text-zinc-400 mb-1">Server URL</label>
+              <div className="flex gap-2">
+                <input
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  placeholder="https://4123.xomnghien.com"
+                  className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                />
+                <button
+                  onClick={saveServerUrl}
+                  disabled={!serverUrl.trim()}
+                  className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-1.5">Changing this will reload the app.</p>
+            </div>
+          </div>
+        )}
+
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="w-4 h-4 text-zinc-400" />
+            <h2 className="text-sm font-medium text-white">Push Notifications</h2>
+          </div>
+          <p className="text-[11px] text-zinc-500 mb-4">
+            Configure Firebase Cloud Messaging to receive push notifications when agent tasks complete.
+          </p>
+
+          {firebaseStatus && (
+            <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
+              {firebaseStatus.configured ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-white">Firebase configured</div>
+                    <div className="text-[10px] text-zinc-500">{firebaseStatus.tokenCount} device(s) registered</div>
+                  </div>
+                  <button
+                    onClick={removeFirebase}
+                    className="text-zinc-600 hover:text-red-400 transition-colors p-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <XCircle className="w-4 h-4 text-zinc-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-zinc-400">Firebase not configured</div>
+                    <div className="text-[10px] text-zinc-500">Add a service account to enable push notifications</div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {push?.isNative && (
+            <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
+              <Bell className="w-4 h-4 text-zinc-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-zinc-300">Notification Permission</div>
+                <div className="text-[10px] text-zinc-500">
+                  {push.permissionStatus === 'granted' ? 'Granted' :
+                    push.permissionStatus === 'denied' ? 'Denied — enable in device settings' :
+                      'Not requested yet'}
+                </div>
+              </div>
+              {push.permissionStatus !== 'granted' && push.permissionStatus !== 'denied' && (
+                <button
+                  onClick={push.requestPermission}
+                  className="h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
+                >
+                  Request
+                </button>
+              )}
+            </div>
+          )}
+
+          {!showFirebaseForm && (!firebaseStatus?.configured) && (
+            <button
+              onClick={() => setShowFirebaseForm(true)}
+              className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
+            >
+              <Flame className="w-3 h-3" />
+              Add Firebase Service Account
+            </button>
+          )}
+
+          {showFirebaseForm && (
+            <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mt-3">
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-medium text-zinc-400">Service Account JSON</label>
+                <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
+                  <Upload className="w-3 h-3" />
+                  Upload
+                  <input type="file" accept=".json" className="hidden" onChange={(e) => handleFileUpload(e, setServiceAccount)} />
+                </label>
+              </div>
+              <textarea
+                value={serviceAccount}
+                onChange={(e) => setServiceAccount(e.target.value)}
+                placeholder='{"type": "service_account", "project_id": "...", ...}'
+                rows={6}
+                className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none mb-3"
+              />
+              {firebaseError && (
+                <p className="text-[11px] text-red-400 mb-3">{firebaseError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { setShowFirebaseForm(false); setServiceAccount(''); setFirebaseError(''); }}
+                  className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveFirebase}
+                  disabled={!serviceAccount.trim() || savingFirebase}
+                  className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  {savingFirebase ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="mb-8">
           <div className="flex items-center justify-between mb-3">

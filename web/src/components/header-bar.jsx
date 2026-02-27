@@ -1,4 +1,4 @@
-import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, Upload, ChevronDown, Download, FileText, Trash2, Pencil, PanelLeft } from 'lucide-react';
+import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, Upload, ChevronDown, Download, FileText, Trash2, Pencil, PanelLeft, Menu } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { FolderPickerDialog } from './folder-picker';
 import { useConfirm } from './confirm-dialog';
@@ -72,7 +72,7 @@ function prettifyModelName(name) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota }) {
+export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota, onOpenMobileNav }) {
   if (!workspace) return null;
 
   const isRunning = workspace.status === 'running';
@@ -97,8 +97,16 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   return (
     <div className="shrink-0">
       {dialog}
-      <div className="flex items-center h-9 px-4 bg-[#0c0c0c] border-b border-white/5">
+      <div className="flex items-center h-9 px-4 bg-zinc-950 border-b border-white/5">
         <div className="flex items-center gap-2 flex-1 min-w-0">
+          {onOpenMobileNav && (
+            <button
+              onClick={onOpenMobileNav}
+              className="md:hidden flex items-center justify-center w-6 h-6 text-zinc-400 hover:text-white transition-colors shrink-0"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          )}
           <div className={`w-2 h-2 rounded-full ${statusDot[workspace.status] || 'bg-zinc-600'} shrink-0`} title={statusLabel[workspace.status]} />
           {editing ? (
             <input
@@ -271,7 +279,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
         </div>
       </div>
 
-      <div className="flex items-center h-8 px-3 bg-[#0c0c0c] border-b border-white/5 overflow-x-auto no-scrollbar whitespace-nowrap">
+      <div className="flex items-center h-8 px-3 bg-zinc-950 border-b border-white/5 overflow-x-auto no-scrollbar whitespace-nowrap">
         <div className="flex items-center gap-0.5 flex-1 min-w-max">
           {isLoading && (
             <div className="flex items-center gap-1.5 h-6 px-2 text-[11px] text-blue-400">

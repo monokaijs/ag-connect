@@ -4,6 +4,7 @@ import {
   gpiGetTrajectory,
   trajectoryToConversation,
 } from './gpi.mjs';
+import { sendPushNotification } from './push.mjs';
 
 const activeMonitors = new Map();
 const lastState = new Map();
@@ -84,7 +85,16 @@ class WorkspaceMonitor {
       }
 
       const data = trajectoryToConversation(result.data);
+      const wasBusy = this.isBusy;
       this.isBusy = data.isBusy;
+
+      if (wasBusy && !data.isBusy) {
+        const wsName = this.workspace.name || 'Workspace';
+        sendPushNotification(
+          `${wsName} — Task Complete`,
+          data.statusText || 'The agent has finished processing your message.'
+        );
+      }
 
       const key = JSON.stringify({
         items: data.items,

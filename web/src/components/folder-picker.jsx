@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Folder, X, ChevronRight, Check } from 'lucide-react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
+import { getAuthHeaders } from '../hooks/use-auth';
 
 export function FolderPickerDialog({ open, onClose, onSelect }) {
   const [currentPath, setCurrentPath] = useState('');
@@ -19,9 +20,9 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
     setError(null);
     try {
       const url = targetPath
-        ? `${API_BASE}/api/system/ls?path=${encodeURIComponent(targetPath)}`
-        : `${API_BASE}/api/system/ls`;
-      const res = await fetch(url);
+        ? `${getApiBase()}/api/system/ls?path=${encodeURIComponent(targetPath)}`
+        : `${getApiBase()}/api/system/ls`;
+      const res = await fetch(url, { headers: getAuthHeaders() });
       const data = await res.json();
 
       if (data.error) {

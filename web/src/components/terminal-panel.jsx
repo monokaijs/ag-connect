@@ -3,7 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
-import { API_BASE, wsProtocol, hostname } from '../config';
+import { getApiBase, getWsBase } from '../config';
+import { getAuthToken } from '../hooks/use-auth';
 import { X, Plus, TerminalSquare } from 'lucide-react';
 
 function TerminalTab({ workspaceId, active, onActivate, onClose, label }) {
@@ -56,8 +57,9 @@ function TerminalTab({ workspaceId, active, onActivate, onClose, label }) {
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const port = API_BASE ? new URL(API_BASE).port : window.location.port;
-    const wsUrl = `${wsProtocol}//${hostname}:${port}/api/workspaces/${workspaceId}/terminal`;
+    const wsBase = getWsBase();
+    const token = getAuthToken();
+    const wsUrl = `${wsBase}/api/workspaces/${workspaceId}/terminal?token=${encodeURIComponent(token || '')}`;
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;

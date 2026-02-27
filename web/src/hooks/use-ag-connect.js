@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
+import { getAuthHeaders } from './use-auth';
 
 export function useAgConnect(workspace, ws) {
   const [status, setStatus] = useState('disconnected');
@@ -12,13 +12,13 @@ export function useAgConnect(workspace, ws) {
   const [hasRejectAll, setHasRejectAll] = useState(false);
 
   const workspaceId = workspace?._id;
-  const apiBase = `${API_BASE}/api/workspaces/${workspaceId}`;
+  const apiBase = `${getApiBase()}/api/workspaces/${workspaceId}`;
 
   const api = useCallback(async (method, path, body) => {
     if (!workspaceId) return {};
     const opts = {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${apiBase}${path}`, opts);

@@ -14,6 +14,8 @@ import { terminalWss } from './terminal.mjs';
 import { startHealthChecker } from './health-checker.mjs';
 import { setupGitRoutes } from './git-routes.mjs';
 import { setupSettingsRoutes } from './settings-routes.mjs';
+import { setupAuthRoutes, requireAuth, verifyWsToken } from './auth.mjs';
+import { setupPushRoutes, tryInitFromDb } from './push.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -48,12 +50,27 @@ function getLocalIPs() {
   return Array.from(results);
 }
 
-server.on('upgrade', (request, socket, head) => {
+async function authenticateWsUpgrade(request) {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const token = url.searchParams.get('token');
+  const user = await verifyWsToken(token);
+  return user;
+}
+
+server.on('upgrade', async (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const pathname = url.pathname;
 
+  const user = await authenticateWsUpgrade(request);
+  if (!user) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
   if (pathname === '/ws' || pathname === '/api/ws') {
     wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.user = user;
       wss.emit('connection', ws, request);
     });
   } else if (pathname.startsWith('/api/workspaces/') && pathname.endsWith('/cdp/vnc')) {
@@ -98,12 +115,21 @@ function broadcast(message) {
 
 await connectDB();
 
+setupAuthRoutes(app);
+
+app.use('/api/workspaces', requireAuth);
+app.use('/api/settings', requireAuth);
+app.use('/api/oauth', requireAuth);
+app.use('/api/system', requireAuth);
+
 setupWorkspaceRoutes(app, broadcast);
 setupOAuthRoutes(app, broadcast);
 setupGitRoutes(app);
 setupSettingsRoutes(app);
 startConversationMonitor(broadcast);
 startHealthChecker(broadcast);
+setupPushRoutes(app);
+tryInitFromDb();
 
 app.get('/health', (req, res) => {
   res.json({ ok: true, version: '2.0.0' });
@@ -130,13 +156,12 @@ server.listen(PORT, HOST, () => {
   }
   console.log('-'.repeat(50));
   console.log(' API:');
+  console.log('   GET    /api/auth/status');
+  console.log('   POST   /api/auth/setup');
+  console.log('   POST   /api/auth/login');
   console.log('   GET    /api/workspaces');
   console.log('   POST   /api/workspaces');
-  console.log('   DELETE /api/workspaces/:id');
-  console.log('   POST   /api/workspaces/:id/start');
-  console.log('   POST   /api/workspaces/:id/stop');
-  console.log('   GET    /api/oauth/google?workspace=ID');
-  console.log('   WS     /ws');
+  console.log('   WS     /ws?token=JWT');
   console.log('='.repeat(50));
   console.log('');
 });

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getAuthHeaders } from '../hooks/use-auth';
 import { Badge } from '@/components/ui/badge';
 import { marked } from 'marked';
 import {
@@ -305,7 +306,7 @@ function PlanReviewBlock({ item, workspaceId, onFileOpen }) {
     try {
       await fetch(`/api/workspaces/${workspaceId}/cdp/send`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ text: 'Proceed' }),
       });
     } catch (err) {
