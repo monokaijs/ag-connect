@@ -1,0 +1,46 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '${AG_PORT:-8080}:80'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ag-data:/app/data
+      - ${HOST_MOUNT_PATH:-/Users}:/host
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/ag-connect
+      - AG_DOCKER_IMAGE=ag-workspace:latest
+      - AG_DOCKER_NETWORK=ag-net
+      - HOST_BASE_PATH=${HOST_MOUNT_PATH:-/Users}
+      - HOST_MOUNT_POINT=/host
+    networks:
+      - ag-net
+    depends_on:
+      - mongo
+      - workspace-build
+    restart: unless-stopped
+
+  workspace-build:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.workspace
+    image: ag-workspace:latest
+    entrypoint: [ 'echo', 'workspace image built' ]
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - ag-net
+    restart: unless-stopped
+
+networks:
+  ag-net:
+    name: ag-net
+
+volumes:
+  ag-data:
+  mongo-data:

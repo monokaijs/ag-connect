@@ -1,0 +1,60 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+  curl \
+  gnupg \
+  ca-certificates \
+  xvfb \
+  x11-utils \
+  libgtk-3-0 \
+  libnotify4 \
+  libnss3 \
+  libxss1 \
+  libasound2 \
+  libgbm1 \
+  libsecret-1-0 \
+  libx11-xcb1 \
+  libxkbfile1 \
+  libdrm2 \
+  libxshmfence1 \
+  fonts-noto \
+  dbus \
+  xdg-utils \
+  git \
+  socat \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y nodejs \
+  && rm -rf /var/lib/apt/lists/*
+
+
+RUN mkdir -p /etc/apt/keyrings \
+  && curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
+  gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
+  tee /etc/apt/sources.list.d/antigravity.list > /dev/null \
+  && apt-get update \
+  && apt-get install -y antigravity \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+RUN useradd -m -s /bin/bash aguser
+USER aguser
+WORKDIR /home/aguser
+
+RUN mkdir -p /home/aguser/.config/Antigravity/User/globalStorage
+
+COPY --chown=aguser:aguser docker/ag-settings/User/settings.json /home/aguser/.config/Antigravity/User/settings.json
+COPY --chown=aguser:aguser docker/ag-settings/User/globalStorage/storage.json /home/aguser/.config/Antigravity/User/globalStorage/storage.json
+COPY --chown=aguser:aguser docker/ag-settings/User/globalStorage/state.vscdb /home/aguser/.config/Antigravity/User/globalStorage/state.vscdb
+
+COPY --chown=aguser:aguser docker/entrypoint.sh /home/aguser/entrypoint.sh
+RUN chmod +x /home/aguser/entrypoint.sh
+
+EXPOSE 9223
+
+ENTRYPOINT ["/home/aguser/entrypoint.sh"]
