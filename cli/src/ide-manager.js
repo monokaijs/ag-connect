@@ -122,11 +122,16 @@ class IdeManager {
       );
     }
 
+    this._killExisting();
+
+    const folderUri = 'file://' + path.resolve(this.folder);
     console.log('Spawning: ' + bin + ' (CDP port ' + port + ')');
 
     this.process = spawn(bin, [
       '--remote-debugging-port=' + port,
-      '--folder', this.folder,
+      '--folder-uri=' + folderUri,
+      '--wait',
+      '--new-window',
     ], {
       cwd: this.folder,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -164,6 +169,18 @@ class IdeManager {
     }
 
     return port;
+  }
+
+  _killExisting() {
+    try {
+      const platform = os.platform();
+      if (platform === 'win32') {
+        execSync('taskkill /F /IM Antigravity.exe 2>nul', { stdio: 'ignore' });
+      } else {
+        execSync("pkill -f '[Aa]ntigravity' 2>/dev/null || true", { stdio: 'ignore' });
+      }
+      console.log('Terminated existing Antigravity processes');
+    } catch { }
   }
 
   async stop() {
