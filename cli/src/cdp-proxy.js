@@ -39,6 +39,40 @@ class CdpProxy {
     }
   }
 
+  async screenshot() {
+    var targets = await this.getTargets();
+    var found = targets.find(function (t) { return t.url && t.url.includes('workbench'); });
+    if (!found) found = targets[0];
+    if (!found || !found.wsUrl) {
+      throw new Error('No CDP target found');
+    }
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(found.wsUrl);
+      const timer = setTimeout(() => { ws.close(); reject(new Error('screenshot_timeout')); }, 10000);
+
+      ws.on('error', (err) => { clearTimeout(timer); reject(err); });
+      ws.on('open', () => {
+        ws.send(JSON.stringify({
+          id: 1,
+          method: 'Page.captureScreenshot',
+          params: { format: 'png', quality: 80 },
+        }));
+      });
+      ws.on('message', (raw) => {
+        try {
+          const data = JSON.parse(raw.toString());
+          if (data.id === 1) {
+            clearTimeout(timer);
+            ws.close();
+            if (data.error) reject(new Error(data.error.message));
+            else resolve(data.result.data);
+          }
+        } catch (e) { }
+      });
+    });
+  }
+
   async evaluate(expression, options) {
     options = options || {};
     var targets = await this.getTargets();
@@ -132,6 +166,75 @@ class CdpProxy {
         });
       });
     });
+  }
+
+  async startScreencast(targetId, qualityPreset, onFrame) {
+    if (this._screencastWs) await this.stopScreencast();
+
+    var targets = await this.getTargets();
+    var found = targetId ? targets.find(function (t) { return t.id === targetId; }) : null;
+    if (!found) found = targets.find(function (t) { return t.url && t.url.includes('workbench'); });
+    if (!found) found = targets[0];
+    if (!found || !found.wsUrl) throw new Error('No CDP target found');
+
+    this._screencastWs = new WebSocket(found.wsUrl);
+    this._screencastMsgId = 1;
+    this._screencastCallbacks = new Map();
+
+    const sendCdp = (method, params) => {
+      const id = this._screencastMsgId++;
+      return new Promise((resolve, reject) => {
+        this._screencastCallbacks.set(id, { resolve, reject });
+        if (this._screencastWs.readyState === WebSocket.OPEN) {
+          this._screencastWs.send(JSON.stringify({ id: id, method: method, params: params }));
+        } else {
+          reject(new Error('CDP not ready'));
+        }
+      });
+    };
+    this._screencastSend = sendCdp;
+
+    this._screencastWs.on('open', async () => {
+      await sendCdp('Page.enable', {});
+      await sendCdp('Page.startScreencast', Object.assign({
+        format: 'jpeg',
+        everyNthFrame: 1,
+      }, qualityPreset));
+    });
+
+    this._screencastWs.on('message', (raw) => {
+      try {
+        const data = JSON.parse(raw.toString());
+        if (data.id && this._screencastCallbacks.has(data.id)) {
+          const cb = this._screencastCallbacks.get(data.id);
+          this._screencastCallbacks.delete(data.id);
+          if (data.error) cb.reject(new Error(data.error.message));
+          else cb.resolve(data.result);
+        } else if (data.method === 'Page.screencastFrame') {
+          const params = data.params;
+          if (onFrame) onFrame(params.data, params.metadata, params.sessionId);
+          sendCdp('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(function () { });
+        }
+      } catch (err) { }
+    });
+  }
+
+  async stopScreencast() {
+    if (this._screencastSend) {
+      try { await this._screencastSend('Page.stopScreencast', {}); } catch (e) { }
+    }
+    if (this._screencastWs) {
+      this._screencastWs.close();
+      this._screencastWs = null;
+    }
+    this._screencastSend = null;
+  }
+
+  async applyInput(type, params) {
+    if (this._screencastSend) {
+      if (type === 'mouse') await this._screencastSend('Input.dispatchMouseEvent', params);
+      else if (type === 'key') await this._screencastSend('Input.dispatchKeyEvent', params);
+    }
   }
 }
 

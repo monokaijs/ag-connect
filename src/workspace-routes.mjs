@@ -16,7 +16,7 @@ import {
   startCliWorkspace,
 } from './cli-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
-import { cliCdpEval, cliGetTargets } from './cli-ws.mjs';
+import { cliCdpEval, cliGetTargets, cliCdpScreenshot } from './cli-ws.mjs';
 
 import { fetchWorkspaceQuota } from './quota.mjs';
 import { SshKey } from './models/ssh-key.mjs';
@@ -300,9 +300,17 @@ function setupWorkspaceRoutes(app, broadcast) {
 
   app.get('/api/workspaces/:id/cdp/targets', async (req, res) => {
     try {
-      const workspace = await Workspace.findById(req.params.id);
-      const port = workspace?.cdpPort || workspace?.ports?.debug;
-      if (!workspace || !port) return res.json([]);
+      const { id } = req.params;
+      const workspace = await Workspace.findById(id);
+      if (!workspace) return res.json([]);
+
+      if (workspace.type === 'cli') {
+        const targets = await cliGetTargets(id);
+        return res.json(targets.filter(t => t.type === 'page' || t.type === 'app'));
+      }
+
+      const port = workspace.cdpPort || workspace.ports?.debug;
+      if (!port) return res.json([]);
       const targets = await getTargetsOnPort(port, workspace.cdpHost);
       res.json(targets.filter(t => t.type === 'page' || t.type === 'app'));
     } catch (err) {
@@ -385,10 +393,30 @@ function setupWorkspaceRoutes(app, broadcast) {
     console.log(`[Send] Message for ${req.params.id}: "${text.substring(0, 80)}"`);
 
     try {
+      let modelUid = workspace.gpi?.selectedModelUid || undefined;
+      if (!modelUid) {
+        try {
+          const discovery = await gpiDiscoverModelUid(workspace);
+          if (discovery.ok && discovery.modelUid) {
+            modelUid = discovery.modelUid;
+            console.log(`[Send] Discovered model from IDE: ${modelUid}`);
+            await Workspace.findByIdAndUpdate(workspace._id, {
+              'gpi.selectedModelUid': modelUid,
+            });
+          } else {
+            // Default fallback if discovery fails
+            modelUid = 'models/gemini-2.5-pro';
+            console.log('[Send] Auto-discovery failed, using default model mapping.');
+          }
+        } catch (err) {
+          console.error('[Send] Model discovery error:', err.message);
+        }
+      }
+
       let cascadeId = workspace.gpi?.activeCascadeId;
       if (!cascadeId) {
-        console.log('[Send] No active cascade, starting new one...');
-        const newChat = await gpiStartCascade(workspace);
+        console.log(`[Send] No active cascade, starting new one with model: ${modelUid}...`);
+        const newChat = await gpiStartCascade(workspace, modelUid);
         console.log('[Send] StartCascade result:', JSON.stringify(newChat).substring(0, 300));
         if (newChat.ok && newChat.data?.cascadeId) {
           cascadeId = newChat.data.cascadeId;
@@ -400,25 +428,6 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
       console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
-
-      let modelUid = workspace.gpi?.selectedModelUid || undefined;
-
-      if (!modelUid) {
-        try {
-          const traj = await gpiGetTrajectory(workspace, cascadeId);
-          if (traj.ok && traj.data) {
-            const full = JSON.stringify(traj.data);
-            const match = full.match(/"planModel":"([^"]+)"/);
-            if (match) {
-              modelUid = match[1];
-              await Workspace.findByIdAndUpdate(workspace._id, {
-                'gpi.selectedModelUid': modelUid,
-              });
-              console.log(`[Send] Model from trajectory: ${modelUid}`);
-            }
-          }
-        } catch { }
-      }
 
       const result = await gpiSendMessage(workspace, cascadeId, text, modelUid);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
@@ -637,9 +646,15 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.get('/api/workspaces/:id/cdp/screenshot', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    if (!workspace.ports?.debug) return res.status(400).json({ error: 'No debug port' });
 
     try {
+      if (workspace.type === 'cli') {
+        const screenshot = await cliCdpScreenshot(workspace._id.toString());
+        return res.json({ ok: true, data: `data:image/png;base64,${screenshot}` });
+      }
+
+      if (!workspace.ports?.debug) return res.status(400).json({ error: 'No debug port' });
+
       const target = await findTargetOnPort(workspace.ports.debug, 'workbench');
       if (!target) return res.status(404).json({ error: 'cdp_not_found' });
 

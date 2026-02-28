@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 import { Workspace } from './models/workspace.mjs';
 import { findTargetOnPort } from './workspace-cdp.mjs';
+import { cliSendCommand, cliVncEvents } from './cli-ws.mjs';
 
 const QUALITY_PRESETS = {
   '480p': { maxWidth: 854, maxHeight: 480, quality: 40 },
@@ -21,8 +22,70 @@ vncWss.on('connection', async (ws, request) => {
     const workspaceId = match[1];
     const workspace = await Workspace.findById(workspaceId);
 
-    if (!workspace || (!workspace.ports?.debug && !workspace.cdpPort)) {
-      ws.close(1008, 'Workspace not found or not running');
+    if (!workspace) {
+      ws.close(1008, 'Workspace not found');
+      return;
+    }
+
+    if (workspace.type === 'cli') {
+      const targetId = url.searchParams.get('targetId');
+      let currentQuality = '720p';
+
+      const handleFrame = (payload) => {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'frame', data: payload.data, metadata: payload.metadata, sessionId: payload.sessionId }));
+        }
+      };
+
+      cliVncEvents.on(`frame:${workspaceId}`, handleFrame);
+
+      const startScreencast = (preset) => {
+        const p = QUALITY_PRESETS[preset] || QUALITY_PRESETS['720p'];
+        currentQuality = preset;
+        cliSendCommand(workspaceId, 'cdp:vnc:start', {
+          targetId: targetId,
+          qualityPreset: {
+            quality: p.quality,
+            maxWidth: p.maxWidth,
+            maxHeight: p.maxHeight
+          }
+        });
+      };
+
+      startScreencast(currentQuality);
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'quality', quality: currentQuality }));
+      }
+
+      ws.on('message', (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          if (msg.type === 'mouse') {
+            cliSendCommand(workspaceId, 'cdp:vnc:input', { inputType: 'mouse', params: msg.params });
+          } else if (msg.type === 'key') {
+            cliSendCommand(workspaceId, 'cdp:vnc:input', { inputType: 'key', params: msg.params });
+          } else if (msg.type === 'quality') {
+            const preset = msg.quality;
+            if (QUALITY_PRESETS[preset]) {
+              startScreencast(preset);
+              if (ws.readyState === 1) {
+                ws.send(JSON.stringify({ type: 'quality', quality: preset }));
+              }
+            }
+          }
+        } catch (err) { }
+      });
+
+      ws.on('close', () => {
+        cliVncEvents.off(`frame:${workspaceId}`, handleFrame);
+        cliSendCommand(workspaceId, 'cdp:vnc:stop', {});
+      });
+
+      return;
+    }
+
+    if (!workspace.ports?.debug && !workspace.cdpPort) {
+      ws.close(1008, 'Workspace not running');
       return;
     }
 

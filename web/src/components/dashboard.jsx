@@ -315,8 +315,9 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
       setModelsOpen(false);
       return;
     }
-    setModelsLoading(true);
     setModelsOpen(true);
+    if (models.length > 0) return;
+    setModelsLoading(true);
     try {
       const res = await fetchModels();
       let val = null;

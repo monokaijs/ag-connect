@@ -1,6 +1,9 @@
 import { WebSocketServer } from 'ws';
 import jwt from 'jsonwebtoken';
 import { Workspace } from './models/workspace.mjs';
+import { EventEmitter } from 'events';
+
+const cliVncEvents = new EventEmitter();
 
 /**
  * Manages WebSocket connections from CLI clients.
@@ -127,6 +130,16 @@ function handleCliMessage(workspaceId, msg) {
       break;
     }
 
+    case 'cdp:vnc:frame': {
+      cliVncEvents.emit(`frame:${workspaceId}`, msg.payload);
+      break;
+    }
+
+    case 'cdp:vnc:frame': {
+      cliVncEvents.emit(`frame:${workspaceId}`, msg.payload);
+      break;
+    }
+
     case 'pong': {
       // heartbeat response
       break;
@@ -192,6 +205,32 @@ function cliGetTargets(workspaceId) {
 }
 
 /**
+ * Get screenshot from CLI client.
+ */
+function cliCdpScreenshot(workspaceId) {
+  const ws = cliClients.get(workspaceId);
+  if (!ws || ws.readyState !== 1) {
+    return Promise.reject(new Error('CLI client not connected'));
+  }
+
+  const requestId = 'screenshot-' + (++requestIdCounter);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error('screenshot timeout'));
+    }, 15000);
+
+    pendingRequests.set(requestId, { resolve, reject, timer });
+
+    ws.send(JSON.stringify({
+      event: 'cdp:screenshot',
+      payload: { requestId },
+    }));
+  });
+}
+
+/**
  * Send a command to the CLI client (stop, restart, etc.)
  */
 function cliSendCommand(workspaceId, event, payload) {
@@ -242,4 +281,6 @@ export {
   isCliConnected,
   setBroadcast,
   cliExec,
+  cliCdpScreenshot,
+  cliVncEvents,
 };

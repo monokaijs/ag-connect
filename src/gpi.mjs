@@ -290,7 +290,7 @@ function buildGetAllTrajectoriesExpr() {
   return buildFetchExpr('GetAllCascadeTrajectories', {});
 }
 
-function buildStartCascadeExpr() {
+function buildStartCascadeExpr(modelUid) {
   const body = {
     metadata: {
       ideName: 'antigravity',
@@ -322,6 +322,12 @@ function buildStartCascadeExpr() {
       },
     },
   };
+
+  if (modelUid) {
+    body.cascadeConfig.planModel = modelUid;
+    body.cascadeConfig.requestedModelUid = modelUid;
+  }
+
   return buildFetchExpr('StartCascade', body);
 }
 
@@ -493,8 +499,8 @@ export async function gpiGetAllTrajectories(workspace) {
   return gpiEval(workspace, buildGetAllTrajectoriesExpr());
 }
 
-export async function gpiStartCascade(workspace) {
-  return gpiEval(workspace, buildStartCascadeExpr());
+export async function gpiStartCascade(workspace, modelUid) {
+  return gpiEval(workspace, buildStartCascadeExpr(modelUid));
 }
 
 export async function gpiDiscoverModelUid(workspace) {

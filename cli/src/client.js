@@ -182,6 +182,46 @@ class AgConnectClient {
         break;
       }
 
+      case 'cdp:screenshot': {
+        try {
+          var data = await this.cdpProxy.screenshot();
+          this._send({
+            event: 'cdp:screenshot:result',
+            payload: { requestId: msg.payload.requestId, data: data },
+          });
+        } catch (err) {
+          this._send({
+            event: 'cdp:screenshot:result',
+            payload: { requestId: msg.payload.requestId, error: err.message },
+          });
+        }
+        break;
+      }
+
+      case 'cdp:vnc:start': {
+        try {
+          await this.cdpProxy.startScreencast(msg.payload.targetId, msg.payload.qualityPreset, (data, metadata, sessionId) => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({
+                event: 'cdp:vnc:frame',
+                payload: { data: data, metadata: metadata, sessionId: sessionId },
+              }));
+            }
+          });
+        } catch (err) { }
+        break;
+      }
+
+      case 'cdp:vnc:stop': {
+        await this.cdpProxy.stopScreencast();
+        break;
+      }
+
+      case 'cdp:vnc:input': {
+        await this.cdpProxy.applyInput(msg.payload.inputType, msg.payload.params);
+        break;
+      }
+
       case 'workspace:stop': {
         console.log('Server requested stop');
         await this.ide.stop();
