@@ -742,10 +742,17 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
 
-      const cloneDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
-      const result = await execInContainer(workspace.containerId, `cd ${cloneDir} && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} 2>&1`);
+      const wsDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
+      const cmd = [
+        `GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} /tmp/_clone_tmp 2>&1`,
+        `&& shopt -s dotglob`,
+        `&& mv /tmp/_clone_tmp/* ${wsDir}/`,
+        `&& rm -rf /tmp/_clone_tmp`,
+      ].join(' ');
+      const result = await execInContainer(workspace.containerId, cmd);
       const hasError = result.includes('fatal:') || result.includes('error:') || result.includes('Permission denied');
       if (hasError) {
+        await execInContainer(workspace.containerId, 'rm -rf /tmp/_clone_tmp').catch(() => { });
         res.json({ ok: false, error: result.trim() });
       } else {
         const repoName = url.replace(/\.git$/, '').split('/').pop();
