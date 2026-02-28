@@ -6,7 +6,6 @@ import { getAuthToken } from '../hooks/use-auth';
 export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onControlsChange }, ref) {
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState(null);
-  const [targets, setTargets] = useState([]);
   const [activeTargetId, setActiveTargetId] = useState(null);
   const [quality, setQuality] = useState('720p');
   const [zoom, setZoom] = useState(1);
@@ -19,28 +18,21 @@ export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onCont
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1 });
   const panRef = useRef({ active: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 });
 
+  const targets = ag?.targets || [];
+
   useEffect(() => {
-    if (!ag?.fetchTargets) return;
-    const fetch = () => {
-      ag.fetchTargets().then(res => {
-        if (!Array.isArray(res)) return;
-        setTargets(res);
-        setActiveTargetId(prev => {
-          if (!prev) {
-            const editor = res.find(t => t.url?.includes('workbench.html'));
-            if (editor) return editor.id;
-            const wb = res.find(t => t.url?.includes('workbench'));
-            return wb ? wb.id : (res.length > 0 ? res[0].id : null);
-          }
-          if (!res.find(t => t.id === prev)) return res.length > 0 ? res[0].id : null;
-          return prev;
-        });
-      }).catch(() => { });
-    };
-    fetch();
-    const interval = setInterval(fetch, 2000);
-    return () => clearInterval(interval);
-  }, [ag]);
+    if (!targets.length) return;
+    setActiveTargetId(prev => {
+      if (!prev) {
+        const editor = targets.find(t => t.url?.includes('workbench.html'));
+        if (editor) return editor.id;
+        const wb = targets.find(t => t.url?.includes('workbench'));
+        return wb ? wb.id : targets[0].id;
+      }
+      if (!targets.find(t => t.id === prev)) return targets[0].id;
+      return prev;
+    });
+  }, [targets]);
 
   useEffect(() => {
     if (!workspaceId || !activeTargetId) return;
@@ -394,7 +386,7 @@ export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onCont
                 onClick={(e) => {
                   e.stopPropagation();
                   ag?.closeTarget(t.id);
-                  setTargets(prev => prev.filter(x => x.id !== t.id));
+                  ag?.setTargets(prev => prev.filter(x => x.id !== t.id));
                   if (activeTargetId === t.id) setActiveTargetId(targets.find(x => x.id !== t.id)?.id || null);
                 }}
                 className={`flex items-center justify-center w-5 h-5 rounded ml-1 transition-colors ${activeTargetId === t.id ? 'hover:bg-white/20 text-white/50 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:bg-white/10 text-zinc-500 hover:text-white'}`}

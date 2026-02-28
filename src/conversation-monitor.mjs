@@ -5,6 +5,7 @@ import {
   gpiGetAllTrajectories,
   trajectoryToConversation,
 } from './gpi.mjs';
+import { getTargetsOnPort } from './workspace-cdp.mjs';
 import { sendPushNotification } from './push.mjs';
 
 const activeMonitors = new Map();
@@ -161,12 +162,35 @@ class WorkspaceMonitor {
           payload: { id: this.wsId, ...payload },
         });
       }
+
+      if (this._pollCount % 3 === 0 || !this._lastTargetHash) {
+        await this.pollTargets();
+      }
     } catch (err) {
       console.error(`[Monitor] Poll error [${this.wsId}]:`, err.message);
     }
 
     this.polling = false;
     this.schedulePoll();
+  }
+
+  async pollTargets() {
+    try {
+      const port = this.workspace.cdpPort || this.workspace.ports?.debug;
+      if (!port) return;
+      const targets = await getTargetsOnPort(port, this.workspace.cdpHost);
+      const filtered = targets
+        .filter(t => t.type === 'page')
+        .map(t => ({ id: t.id, title: t.title, url: t.url }));
+      const hash = filtered.map(t => t.id).sort().join(',');
+      if (hash !== this._lastTargetHash) {
+        this._lastTargetHash = hash;
+        this.broadcast({
+          event: 'targets:update',
+          payload: { id: this.wsId, targets: filtered },
+        });
+      }
+    } catch { }
   }
 
   cleanup() {

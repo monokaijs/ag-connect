@@ -11,6 +11,7 @@ export function useAgConnect(workspace, ws) {
   const [isLoading, setIsLoading] = useState(false);
   const [hasAcceptAll, setHasAcceptAll] = useState(false);
   const [hasRejectAll, setHasRejectAll] = useState(false);
+  const [targets, setTargets] = useState([]);
 
   const workspaceId = workspace?._id;
   const apiBase = `${getApiBase()}/api/workspaces/${workspaceId}`;
@@ -123,10 +124,14 @@ export function useAgConnect(workspace, ws) {
         }
         if (val?.current) setCurrentModel(val.current);
       }).catch(() => { });
+
+      fetchTargets().then(res => {
+        if (Array.isArray(res)) setTargets(res);
+      }).catch(() => { });
     } else {
       setStatus('disconnected');
     }
-  }, [workspaceId, workspace?.status, fetchModels, syncChat]);
+  }, [workspaceId, workspace?.status, fetchModels, syncChat, fetchTargets]);
 
   useEffect(() => {
     if (!ws || !workspaceId) return;
@@ -139,6 +144,9 @@ export function useAgConnect(workspace, ws) {
           setIsBusy(!!msg.payload.isBusy);
           setHasAcceptAll(!!msg.payload.hasAcceptAll);
           setHasRejectAll(!!msg.payload.hasRejectAll);
+        }
+        if (msg.event === 'targets:update' && msg.payload?.id === workspaceId) {
+          setTargets(msg.payload.targets || []);
         }
       } catch { }
     };
@@ -153,7 +161,7 @@ export function useAgConnect(workspace, ws) {
     fetchModels, changeModel,
     clickAcceptAll, clickRejectAll,
     clickNewChat, fetchConversations, selectConversation,
-    captureScreenshot, fetchTargets, closeTarget,
+    captureScreenshot, fetchTargets, closeTarget, targets, setTargets,
     api, syncChat,
   };
 }
