@@ -1,17 +1,41 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getWsBase } from '../config';
-import { Loader2, X, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Loader2, X, AlertCircle, Maximize, Minimize, Keyboard, ZoomIn, ZoomOut, RotateCcw, MonitorSmartphone } from 'lucide-react';
 import { getAuthToken } from '../hooks/use-auth';
+
+const QUALITY_OPTIONS = ['480p', '720p', '1080p'];
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setMobile(window.innerWidth < 768 || 'ontouchstart' in window);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  return mobile;
+}
 
 export function VncViewer({ workspaceId, ag }) {
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState(null);
   const [targets, setTargets] = useState([]);
   const [activeTargetId, setActiveTargetId] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [quality, setQuality] = useState('720p');
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [showToolbar, setShowToolbar] = useState(true);
   const wsRef = useRef(null);
   const containerRef = useRef(null);
+  const wrapperRef = useRef(null);
   const metadataRef = useRef(null);
+  const hiddenInputRef = useRef(null);
+  const isMobile = useIsMobile();
+
+  const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1 });
+  const panRef = useRef({ active: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 });
+  const toolbarTimer = useRef(null);
 
   useEffect(() => {
     if (!ag?.fetchTargets) return;
@@ -46,52 +70,73 @@ export function VncViewer({ workspaceId, ag }) {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onopen = () => {
-      setError(null);
-    };
+    ws.onopen = () => setError(null);
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'frame') {
           setFrame(`data:image/jpeg;base64,${msg.data}`);
-          metadataRef.current = msg.metadata; // metadata has deviceWidth, deviceHeight, pageScaleFactor, scrollOffsetX, scrollOffsetY
+          metadataRef.current = msg.metadata;
+        } else if (msg.type === 'quality') {
+          setQuality(msg.quality);
         }
-      } catch (err) {
-        console.error('WebSocket message parsing error:', err);
-      }
+      } catch { }
     };
 
-    ws.onerror = () => {
-      setError('Connection failed. Please ensure the workspace is running.');
-    };
+    ws.onerror = () => setError('Connection failed. Please ensure the workspace is running.');
+    ws.onclose = () => { };
 
-    ws.onclose = () => {
-      // closed
-    };
-
-    return () => {
-      ws.close();
-    };
+    return () => ws.close();
   }, [workspaceId, activeTargetId]);
 
-  const sendMouse = (type, e) => {
-    if (!wsRef.current || wsRef.current.readyState !== 1 || !metadataRef.current || !containerRef.current) return;
+  const changeQuality = useCallback((q) => {
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(JSON.stringify({ type: 'quality', quality: q }));
+    }
+  }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (!wrapperRef.current) return;
+    if (!document.fullscreenElement) {
+      wrapperRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { });
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => { });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    setZoom(z => Math.min(z * 1.5, 5));
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    setZoom(z => {
+      const next = Math.max(z / 1.5, 1);
+      if (next <= 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  }, []);
+
+  const getCoords = useCallback((clientX, clientY) => {
+    if (!containerRef.current || !metadataRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
     const meta = metadataRef.current;
-
-    // Scale coordinates based on the actual image size vs displayed size
-    // For simplicity, we assume the image fills the container in object-contain
-    // We need to calculate the actual letterbox offset
     const containerAspect = rect.width / rect.height;
     const frameAspect = meta.deviceWidth / meta.deviceHeight;
-
     let drawWidth = rect.width;
     let drawHeight = rect.height;
-    let offX = 0;
-    let offY = 0;
-
+    let offX = 0, offY = 0;
     if (containerAspect > frameAspect) {
       drawWidth = rect.height * frameAspect;
       offX = (rect.width - drawWidth) / 2;
@@ -99,15 +144,24 @@ export function VncViewer({ workspaceId, ag }) {
       drawHeight = rect.width / frameAspect;
       offY = (rect.height - drawHeight) / 2;
     }
+    drawWidth *= zoom;
+    drawHeight *= zoom;
+    const cx = (rect.width / 2) + pan.x;
+    const cy = (rect.height / 2) + pan.y;
+    const imgLeft = cx - drawWidth / 2;
+    const imgTop = cy - drawHeight / 2;
+    const relX = clientX - rect.left - imgLeft;
+    const relY = clientY - rect.top - imgTop;
+    if (relX < 0 || relX > drawWidth || relY < 0 || relY > drawHeight) return null;
+    const x = Math.round((relX / drawWidth) * meta.deviceWidth);
+    const y = Math.round((relY / drawHeight) * meta.deviceHeight);
+    return { x, y };
+  }, [zoom, pan]);
 
-    const unscaledX = e.clientX - rect.left - offX;
-    const unscaledY = e.clientY - rect.top - offY;
-
-    if (unscaledX < 0 || unscaledX > drawWidth || unscaledY < 0 || unscaledY > drawHeight) return;
-
-    const x = Math.round((unscaledX / drawWidth) * meta.deviceWidth);
-    const y = Math.round((unscaledY / drawHeight) * meta.deviceHeight);
-
+  const sendMouse = useCallback((type, e) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const coords = getCoords(e.clientX, e.clientY);
+    if (!coords) return;
     let button = 'none';
     if (type === 'mouseMoved') {
       if ((e.buttons & 1) !== 0) button = 'left';
@@ -118,116 +172,318 @@ export function VncViewer({ workspaceId, ag }) {
       else if (e.button === 1) button = 'middle';
       else if (e.button === 2) button = 'right';
     }
-
     let modifiers = 0;
     if (e.altKey) modifiers |= 1;
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
+    wsRef.current.send(JSON.stringify({
+      type: 'mouse',
+      params: { type, ...coords, button, clickCount: e.detail || 1, modifiers },
+    }));
+  }, [getCoords]);
 
-    const params = { type, x, y, button, clickCount: e.detail || 1, modifiers };
-    wsRef.current.send(JSON.stringify({ type: 'mouse', params }));
+  const handlePointerDown = (e) => {
+    if (isMobile && e.pointerType === 'touch') return;
+    sendMouse('mousePressed', e);
   };
-
-  const handlePointerDown = (e) => sendMouse('mousePressed', e);
-  const handlePointerUp = (e) => sendMouse('mouseReleased', e);
+  const handlePointerUp = (e) => {
+    if (isMobile && e.pointerType === 'touch') return;
+    sendMouse('mouseReleased', e);
+  };
   const handlePointerMove = (e) => {
-    // Only send mouseMoved periodically or if buttons are pressed
+    if (isMobile && e.pointerType === 'touch') return;
     sendMouse('mouseMoved', e);
   };
-  const handleWheel = (e) => {
-    if (!wsRef.current || wsRef.current.readyState !== 1 || !metadataRef.current || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const meta = metadataRef.current;
 
-    const containerAspect = rect.width / rect.height;
-    const frameAspect = meta.deviceWidth / meta.deviceHeight;
-    let drawWidth = rect.width;
-    let drawHeight = rect.height;
-    let offX = 0; let offY = 0;
-    if (containerAspect > frameAspect) {
-      drawWidth = rect.height * frameAspect;
-      offX = (rect.width - drawWidth) / 2;
-    } else {
-      drawHeight = rect.width / frameAspect;
-      offY = (rect.height - drawHeight) / 2;
+  const handleWheel = useCallback((e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else zoomOut();
+      return;
     }
-    const unscaledX = e.clientX - rect.left - offX;
-    const unscaledY = e.clientY - rect.top - offY;
-    if (unscaledX < 0 || unscaledX > drawWidth || unscaledY < 0 || unscaledY > drawHeight) return;
-
-    const x = Math.round((unscaledX / drawWidth) * meta.deviceWidth);
-    const y = Math.round((unscaledY / drawHeight) * meta.deviceHeight);
-
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const coords = getCoords(e.clientX, e.clientY);
+    if (!coords) return;
     let modifiers = 0;
     if (e.altKey) modifiers |= 1;
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
-
     wsRef.current.send(JSON.stringify({
-      type: 'mouse', // Backend will dispatch this as Input.dispatchMouseEvent
-      params: { type: 'mouseWheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers }
+      type: 'mouse',
+      params: { type: 'mouseWheel', ...coords, deltaX: e.deltaX, deltaY: e.deltaY, modifiers },
     }));
-  };
+  }, [getCoords, zoomIn, zoomOut]);
+
+  const lastTap = useRef(0);
+  const handleTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchRef.current = { active: true, startDist: Math.hypot(dx, dy), startZoom: zoom };
+      panRef.current.active = false;
+    } else if (e.touches.length === 1 && zoom > 1) {
+      panRef.current = { active: true, startX: e.touches[0].clientX, startY: e.touches[0].clientY, startPanX: pan.x, startPanY: pan.y };
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTap.current < 300) {
+        resetZoom();
+      }
+      lastTap.current = now;
+    }
+  }, [zoom, pan, resetZoom]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (e.touches.length === 2 && pinchRef.current.active) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / pinchRef.current.startDist;
+      const next = Math.max(1, Math.min(pinchRef.current.startZoom * scale, 5));
+      setZoom(next);
+      if (next <= 1) setPan({ x: 0, y: 0 });
+    } else if (e.touches.length === 1 && panRef.current.active && zoom > 1) {
+      const dx = e.touches[0].clientX - panRef.current.startX;
+      const dy = e.touches[0].clientY - panRef.current.startY;
+      setPan({ x: panRef.current.startPanX + dx, y: panRef.current.startPanY + dy });
+    }
+  }, [zoom]);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (e.touches.length < 2) pinchRef.current.active = false;
+    if (e.touches.length === 0) {
+      if (!panRef.current.active || (Math.abs(pan.x - panRef.current.startPanX) < 5 && Math.abs(pan.y - panRef.current.startPanY) < 5)) {
+        if (e.changedTouches.length === 1 && !pinchRef.current.active) {
+          const t = e.changedTouches[0];
+          const coords = getCoords(t.clientX, t.clientY);
+          if (coords && wsRef.current?.readyState === 1) {
+            wsRef.current.send(JSON.stringify({
+              type: 'mouse',
+              params: { type: 'mousePressed', ...coords, button: 'left', clickCount: 1, modifiers: 0 },
+            }));
+            setTimeout(() => {
+              if (wsRef.current?.readyState === 1) {
+                wsRef.current.send(JSON.stringify({
+                  type: 'mouse',
+                  params: { type: 'mouseReleased', ...coords, button: 'left', clickCount: 1, modifiers: 0 },
+                }));
+              }
+            }, 50);
+          }
+        }
+      }
+      panRef.current.active = false;
+    }
+  }, [getCoords, pan]);
+
+  const openKeyboard = useCallback(() => {
+    if (hiddenInputRef.current) {
+      hiddenInputRef.current.focus();
+      hiddenInputRef.current.click();
+    }
+  }, []);
+
+  const handleHiddenInput = useCallback((e) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const text = e.target.value;
+    if (!text) return;
+    for (const char of text) {
+      wsRef.current.send(JSON.stringify({
+        type: 'key',
+        params: { type: 'keyDown', text: char, unmodifiedText: char, key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 },
+      }));
+      wsRef.current.send(JSON.stringify({
+        type: 'key',
+        params: { type: 'keyUp', key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 },
+      }));
+    }
+    e.target.value = '';
+  }, []);
+
+  const handleHiddenKeyDown = useCallback((e) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    if (e.key.length > 1) {
+      let modifiers = 0;
+      if (e.altKey) modifiers |= 1;
+      if (e.ctrlKey) modifiers |= 2;
+      if (e.metaKey) modifiers |= 4;
+      if (e.shiftKey) modifiers |= 8;
+      wsRef.current.send(JSON.stringify({
+        type: 'key',
+        params: {
+          type: 'keyDown',
+          keyIdentifier: e.key, code: e.code, key: e.key,
+          windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
+          modifiers,
+        },
+      }));
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleHiddenKeyUp = useCallback((e) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    if (e.key.length > 1) {
+      let modifiers = 0;
+      if (e.altKey) modifiers |= 1;
+      if (e.ctrlKey) modifiers |= 2;
+      if (e.metaKey) modifiers |= 4;
+      if (e.shiftKey) modifiers |= 8;
+      wsRef.current.send(JSON.stringify({
+        type: 'key',
+        params: {
+          type: 'keyUp',
+          keyIdentifier: e.key, code: e.code, key: e.key,
+          windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
+          modifiers,
+        },
+      }));
+    }
+  }, []);
 
   const handleKeyDown = (e) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
-
     let modifiers = 0;
     if (e.altKey) modifiers |= 1;
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
-
     wsRef.current.send(JSON.stringify({
       type: 'key',
       params: {
         type: 'keyDown',
         text: e.key.length === 1 ? e.key : undefined,
         unmodifiedText: e.key.length === 1 ? e.key : undefined,
-        keyIdentifier: e.key,
-        code: e.code,
-        key: e.key,
-        windowsVirtualKeyCode: e.keyCode,
-        nativeVirtualKeyCode: e.keyCode,
-        autoRepeat: e.repeat,
-        isKeypad: e.location === 3,
-        isSystemKey: e.altKey || e.ctrlKey || e.metaKey,
-        modifiers
-      }
+        keyIdentifier: e.key, code: e.code, key: e.key,
+        windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
+        autoRepeat: e.repeat, isKeypad: e.location === 3,
+        isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers,
+      },
     }));
     e.preventDefault();
   };
 
   const handleKeyUp = (e) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
-
     let modifiers = 0;
     if (e.altKey) modifiers |= 1;
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
-
     wsRef.current.send(JSON.stringify({
       type: 'key',
       params: {
         type: 'keyUp',
-        keyIdentifier: e.key,
-        code: e.code,
-        key: e.key,
-        windowsVirtualKeyCode: e.keyCode,
-        nativeVirtualKeyCode: e.keyCode,
+        keyIdentifier: e.key, code: e.code, key: e.key,
+        windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
         isKeypad: e.location === 3,
-        isSystemKey: e.altKey || e.ctrlKey || e.metaKey,
-        modifiers
-      }
+        isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers,
+      },
     }));
     e.preventDefault();
   };
 
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const timer = setTimeout(() => setShowToolbar(false), 3000);
+    toolbarTimer.current = timer;
+    return () => clearTimeout(timer);
+  }, [isFullscreen]);
+
+  const handleMouseMoveToolbar = useCallback(() => {
+    if (!isFullscreen) return;
+    setShowToolbar(true);
+    clearTimeout(toolbarTimer.current);
+    toolbarTimer.current = setTimeout(() => setShowToolbar(false), 3000);
+  }, [isFullscreen]);
+
+  const imgStyle = {
+    transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+    transformOrigin: 'center center',
+    transition: pinchRef.current.active || panRef.current.active ? 'none' : 'transform 0.15s ease-out',
+  };
+
   return (
-    <div className="flex flex-col flex-1 w-full h-full bg-[#111] overflow-hidden relative">
+    <div
+      ref={wrapperRef}
+      className="flex flex-col flex-1 w-full h-full bg-[#0a0a0a] overflow-hidden relative"
+      onMouseMove={handleMouseMoveToolbar}
+    >
+      <input
+        ref={hiddenInputRef}
+        type="text"
+        className="fixed -top-[100px] left-0 w-0 h-0 opacity-0"
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        onInput={handleHiddenInput}
+        onKeyDown={handleHiddenKeyDown}
+        onKeyUp={handleHiddenKeyUp}
+      />
+
+      <div
+        className={`absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-2 py-1.5 bg-gradient-to-b from-black/80 to-transparent transition-all duration-300 ${isFullscreen && !showToolbar ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+      >
+        <div className="flex items-center gap-1">
+          {QUALITY_OPTIONS.map(q => (
+            <button
+              key={q}
+              onClick={() => changeQuality(q)}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${quality === q ? 'bg-white/20 text-white ring-1 ring-white/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {zoom > 1 && (
+            <button
+              onClick={resetZoom}
+              className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+              title="Reset zoom"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={zoomOut}
+            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Zoom out"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] text-zinc-500 min-w-[32px] text-center font-mono">{Math.round(zoom * 100)}%</span>
+          <button
+            onClick={zoomIn}
+            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Zoom in"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+          {isMobile && (
+            <button
+              onClick={openKeyboard}
+              className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+              title="Open keyboard"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+      </div>
+
       <div
         className="flex-1 w-full min-h-0 flex flex-col items-center justify-center focus:outline-none relative"
         tabIndex={0}
@@ -247,25 +503,30 @@ export function VncViewer({ workspaceId, ag }) {
         ) : (
           <div
             ref={containerRef}
-            className="w-full h-full flex items-center justify-center select-none"
+            className="w-full h-full flex items-center justify-center select-none overflow-hidden"
             style={{ touchAction: 'none' }}
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
             onPointerMove={handlePointerMove}
             onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
             onContextMenu={e => e.preventDefault()}
           >
             <img
               src={frame}
               alt="Remote View"
-              className="object-contain w-full h-full pointer-events-none rounded shadow-2xl ring-1 ring-white/10 bg-black"
+              className="object-contain w-full h-full pointer-events-none bg-black"
+              style={imgStyle}
+              draggable={false}
             />
           </div>
         )}
       </div>
 
       {targets.length > 0 && (
-        <div className="shrink-0 h-10 bg-zinc-950 border-t border-white/5 flex items-center px-2 gap-2 overflow-x-auto no-scrollbar">
+        <div className={`shrink-0 h-10 bg-zinc-950 border-t border-white/5 flex items-center px-2 gap-2 overflow-x-auto no-scrollbar transition-all duration-300 ${isFullscreen && !showToolbar ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
           {targets.map(t => (
             <div
               key={t.id}

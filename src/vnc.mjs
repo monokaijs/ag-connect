@@ -2,6 +2,12 @@ import { WebSocketServer } from 'ws';
 import { Workspace } from './models/workspace.mjs';
 import { findTargetOnPort } from './workspace-cdp.mjs';
 
+const QUALITY_PRESETS = {
+  '480p': { maxWidth: 854, maxHeight: 480, quality: 40 },
+  '720p': { maxWidth: 1280, maxHeight: 720, quality: 55 },
+  '1080p': { maxWidth: 1920, maxHeight: 1080, quality: 70 },
+};
+
 export const vncWss = new WebSocketServer({ noServer: true });
 
 vncWss.on('connection', async (ws, request) => {
@@ -29,12 +35,12 @@ vncWss.on('connection', async (ws, request) => {
       return;
     }
 
-    // Connect to CDP WebSocket
     const { WebSocket } = await import('ws');
     const cdpWs = new WebSocket(target.wsUrl);
 
     let msgId = 1;
     const callbacks = new Map();
+    let currentQuality = '720p';
 
     const sendCdp = (method, params) => {
       const id = msgId++;
@@ -48,9 +54,27 @@ vncWss.on('connection', async (ws, request) => {
       });
     };
 
+    const startScreencast = async (preset) => {
+      const p = QUALITY_PRESETS[preset] || QUALITY_PRESETS['720p'];
+      currentQuality = preset;
+      try {
+        await sendCdp('Page.stopScreencast', {});
+      } catch { }
+      await sendCdp('Page.startScreencast', {
+        format: 'jpeg',
+        quality: p.quality,
+        maxWidth: p.maxWidth,
+        maxHeight: p.maxHeight,
+        everyNthFrame: 1,
+      });
+    };
+
     cdpWs.on('open', async () => {
       await sendCdp('Page.enable', {});
-      await sendCdp('Page.startScreencast', { format: 'jpeg', quality: 50, everyNthFrame: 1 });
+      await startScreencast(currentQuality);
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'quality', quality: currentQuality }));
+      }
     });
 
     cdpWs.on('message', (raw) => {
@@ -62,12 +86,10 @@ vncWss.on('connection', async (ws, request) => {
           if (data.error) reject(new Error(data.error.message));
           else resolve(data.result);
         } else if (data.method === 'Page.screencastFrame') {
-          // Send frame to frontend
           const params = data.params;
           if (ws.readyState === 1) {
             ws.send(JSON.stringify({ type: 'frame', data: params.data, metadata: params.metadata, sessionId: params.sessionId }));
           }
-          // Ack frame
           sendCdp('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => { });
         }
       } catch (err) {
@@ -86,6 +108,14 @@ vncWss.on('connection', async (ws, request) => {
           await sendCdp('Input.dispatchMouseEvent', msg.params);
         } else if (msg.type === 'key') {
           await sendCdp('Input.dispatchKeyEvent', msg.params);
+        } else if (msg.type === 'quality') {
+          const preset = msg.quality;
+          if (QUALITY_PRESETS[preset]) {
+            await startScreencast(preset);
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: 'quality', quality: preset }));
+            }
+          }
         }
       } catch (err) {
         console.error('WS client message error:', err);
