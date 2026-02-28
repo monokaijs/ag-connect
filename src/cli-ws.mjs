@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import jwt from 'jsonwebtoken';
+import { Workspace } from './models/workspace.mjs';
 
 /**
  * Manages WebSocket connections from CLI clients.
@@ -14,6 +15,11 @@ const cliClients = new Map();
 const pendingRequests = new Map();
 
 let requestIdCounter = 0;
+let _broadcast = null;
+
+function setBroadcast(fn) {
+  _broadcast = fn;
+}
 
 const cliWss = new WebSocketServer({ noServer: true });
 
@@ -42,6 +48,19 @@ cliWss.on('connection', (ws, req) => {
     console.log(`[cli-ws] CLI client disconnected for workspace ${workspaceId}`);
     if (cliClients.get(workspaceId) === ws) {
       cliClients.delete(workspaceId);
+      Workspace.findById(workspaceId).then(w => {
+        if (!w || w.status === 'stopped') return;
+        w.status = 'stopped';
+        w.stage = '';
+        w.save().then(() => {
+          if (_broadcast) {
+            _broadcast({
+              event: 'workspace:status',
+              payload: { id: workspaceId, status: 'stopped', stage: '' },
+            });
+          }
+        });
+      }).catch(() => { });
     }
   });
 
@@ -54,11 +73,39 @@ function handleCliMessage(workspaceId, msg) {
   switch (msg.event) {
     case 'cli:ready': {
       console.log(`[cli-ws] Workspace ${workspaceId} is ready (CDP port ${msg.payload?.cdpPort})`);
+      Workspace.findById(workspaceId).then(ws => {
+        if (!ws) return;
+        ws.status = 'running';
+        ws.stage = '';
+        ws.cliPort = msg.payload?.cdpPort || 0;
+        ws.save().then(() => {
+          if (_broadcast) {
+            _broadcast({
+              event: 'workspace:status',
+              payload: { id: workspaceId, status: 'running', stage: '' },
+            });
+          }
+        });
+      }).catch(err => console.error('[cli-ws] Error updating workspace:', err.message));
       break;
     }
 
     case 'cli:stopped': {
       console.log(`[cli-ws] Workspace ${workspaceId} stopped`);
+      Workspace.findById(workspaceId).then(ws => {
+        if (!ws) return;
+        ws.status = 'stopped';
+        ws.stage = '';
+        ws.cliPort = 0;
+        ws.save().then(() => {
+          if (_broadcast) {
+            _broadcast({
+              event: 'workspace:status',
+              payload: { id: workspaceId, status: 'stopped', stage: '' },
+            });
+          }
+        });
+      }).catch(err => console.error('[cli-ws] Error updating workspace:', err.message));
       break;
     }
 
@@ -168,4 +215,5 @@ export {
   cliGetTargets,
   cliSendCommand,
   isCliConnected,
+  setBroadcast,
 };

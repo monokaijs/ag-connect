@@ -17,7 +17,7 @@ import { setupGitRoutes } from './git-routes.mjs';
 import { setupSettingsRoutes } from './settings-routes.mjs';
 import { setupAuthRoutes, requireAuth, verifyWsToken } from './auth.mjs';
 import { setupPushRoutes, tryInitFromDb } from './push.mjs';
-import { cliWss } from './cli-ws.mjs';
+import { cliWss, setBroadcast } from './cli-ws.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -122,6 +122,8 @@ function broadcast(message) {
     }
   });
 }
+
+setBroadcast(broadcast);
 
 await connectDB();
 
