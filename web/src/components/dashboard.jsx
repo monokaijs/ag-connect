@@ -490,7 +490,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
                       return (
                         <button
                           key={i}
-                          onClick={() => handleSelectModel(m.label)}
+                          onMouseDown={() => handleSelectModel(m.label)}
                           className='flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent'
                         >
                           <Check className={`h-3.5 w-3.5 shrink-0 ${m.selected ? 'opacity-100' : 'opacity-0'}`} />
