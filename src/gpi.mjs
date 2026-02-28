@@ -156,12 +156,12 @@ function buildSendExpr(cascadeId, message, model) {
             artifactReviewMode: 'ARTIFACT_REVIEW_MODE_ALWAYS',
           },
         },
-        ...(model ? { requestedModelUid: model } : {}),
+        ...(model ? { requestedModel: { model } } : {}),
       },
     },
   };
 
-  const jsonBody = JSON.stringify(body);
+  const modelJson = model ? JSON.stringify(model) : null;
   return `(async () => {
     try {
       const perf = performance.getEntriesByType('resource');
@@ -177,6 +177,15 @@ function buildSendExpr(cascadeId, message, model) {
       const csrf = window.__gpiCsrf;
       if (!csrf) return { ok: false, error: 'no_csrf' };
 
+      const requestBody = ${JSON.stringify(JSON.stringify(body))};
+      const parsed = JSON.parse(requestBody);
+      const modelId = ${modelJson ? `${modelJson}` : 'null'} || window.__gpiModelUid;
+      if (modelId && !parsed.cascadeConfig?.plannerConfig?.requestedModel) {
+        parsed.cascadeConfig = parsed.cascadeConfig || {};
+        parsed.cascadeConfig.plannerConfig = parsed.cascadeConfig.plannerConfig || {};
+        parsed.cascadeConfig.plannerConfig.requestedModel = { model: modelId };
+      }
+
       const origFetch = window.__origFetch || window.fetch;
       const res = await origFetch(lsUrl + '${LS_PREFIX}/SendUserCascadeMessage', {
         method: 'POST',
@@ -185,10 +194,10 @@ function buildSendExpr(cascadeId, message, model) {
           'connect-protocol-version': '1',
           'x-codeium-csrf-token': csrf,
         },
-        body: ${JSON.stringify(jsonBody)},
+        body: JSON.stringify(parsed),
       });
       const data = await res.json().catch(() => null);
-      return { ok: res.status === 200, data };
+      return { ok: res.status === 200, status: res.status, data };
     } catch(e) {
       return { ok: false, error: e.message };
     }
@@ -218,6 +227,13 @@ function buildBootstrapExpr() {
             const h = opts.headers || {};
             const c = h['x-codeium-csrf-token'];
             if (c) window.__gpiCsrf = c;
+            if (url.includes('SendUserCascadeMessage') && opts.body) {
+              try {
+                const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+                const uid = b?.cascadeConfig?.plannerConfig?.requestedModelUid;
+                if (uid) window.__gpiModelUid = uid;
+              } catch {}
+            }
           }
           return origFetch.apply(this, args);
         };
@@ -256,6 +272,7 @@ function buildBootstrapExpr() {
         lsUrl: lsUrl || null,
         hasCsrf: !!window.__gpiCsrf,
         csrf: window.__gpiCsrf || null,
+        modelUid: window.__gpiModelUid || null,
         installed: true,
       };
     } catch(e) {
@@ -361,13 +378,22 @@ function buildCancelExpr(cascadeId) {
 async function gpiEval(workspace, expression) {
   const port = workspace.cdpPort || workspace.ports?.debug;
   if (!port) return { ok: false, error: 'no_debug_port' };
+
+  const pickBest = (results) => {
+    if (!results?.length) return null;
+    return results.find(r => r.value?.ok === true)?.value
+      || results.find(r => r.value?.turnCount !== undefined)?.value
+      || results.find(r => !r.value?.error)?.value
+      || results[0]?.value;
+  };
+
   const result = await cdpEvalOnPort(port, expression, {
     target: 'workbench',
     host: workspace.cdpHost,
     timeout: 15000,
   });
   if (!result.ok) return result;
-  const val = result.results?.[0]?.value;
+  const val = pickBest(result.results);
 
   if (val?.error === 'no_csrf') {
     console.log('[GPI] CSRF missing, auto-bootstrapping...');
@@ -379,7 +405,7 @@ async function gpiEval(workspace, expression) {
         timeout: 15000,
       });
       if (!retry.ok) return retry;
-      return retry.results?.[0]?.value || { ok: false, error: 'no_result_after_retry' };
+      return pickBest(retry.results) || { ok: false, error: 'no_result_after_retry' };
     }
     return val;
   }
@@ -438,6 +464,37 @@ export async function gpiGetAllTrajectories(workspace) {
 
 export async function gpiStartCascade(workspace) {
   return gpiEval(workspace, buildStartCascadeExpr());
+}
+
+export async function gpiDiscoverModelUid(workspace) {
+  const expr = `(async () => {
+    try {
+      if (window.__gpiModelUid) return { ok: true, modelUid: window.__gpiModelUid, source: 'intercepted' };
+
+      try {
+        const storage = Object.keys(localStorage);
+        for (const key of storage) {
+          if (key.includes('model') || key.includes('cascade') || key.includes('planner')) {
+            const val = localStorage.getItem(key);
+            if (val && val.length < 500) {
+              try {
+                const parsed = JSON.parse(val);
+                if (parsed.modelUid || parsed.model_uid || parsed.requestedModelUid) {
+                  const uid = parsed.modelUid || parsed.model_uid || parsed.requestedModelUid;
+                  return { ok: true, modelUid: uid, source: 'localStorage:' + key };
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+
+      return { ok: false, error: 'not_found' };
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  })()`;
+  return gpiEval(workspace, expr);
 }
 
 export async function gpiCancelInvocation(workspace, cascadeId) {

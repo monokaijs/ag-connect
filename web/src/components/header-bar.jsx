@@ -1,8 +1,10 @@
-import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, Upload, ChevronDown, Download, FileText, Trash2, Pencil, PanelLeft, Menu } from 'lucide-react';
+import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, ChevronDown, Download, Trash2, Pencil, PanelLeft, Menu } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { FolderPickerDialog } from './folder-picker';
 import { useConfirm } from './confirm-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { getApiBase } from '../config';
+import { getAuthHeaders } from '../hooks/use-auth';
 const statusLabel = {
   creating: 'Creating...',
   initializing: 'Initializing...',
@@ -80,11 +82,38 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   const isLoading = workspace.status === 'creating' || workspace.status === 'initializing';
   const isConnected = ag?.status === 'connected';
   const [showPicker, setShowPicker] = useState(false);
+  const [showClone, setShowClone] = useState(false);
+  const [cloneUrl, setCloneUrl] = useState('');
+  const [cloning, setCloning] = useState(false);
+  const [cloneError, setCloneError] = useState('');
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const submittedRef = useRef(false);
   const overallQuota = getOverallQuota(quota);
   const { confirm, dialog } = useConfirm();
+
+  const handleClone = async () => {
+    if (!cloneUrl.trim() || cloning) return;
+    setCloning(true);
+    setCloneError('');
+    try {
+      const res = await fetch(`${getApiBase()}/api/workspaces/${workspace._id}/git/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ url: cloneUrl.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCloneError(data.error || 'Clone failed');
+      } else {
+        setShowClone(false);
+        setCloneUrl('');
+      }
+    } catch (e) {
+      setCloneError(e.message || 'Clone failed');
+    }
+    setCloning(false);
+  };
 
   const submitRename = () => {
     if (submittedRef.current) return;
@@ -301,11 +330,11 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
-                        title="File"
+                        title="New Workspace"
                         className="flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
                       >
-                        <FileText className="w-3 h-3" />
-                        <span className="hidden md:inline">File</span>
+                        <Folder className="w-3 h-3" />
+                        <span className="hidden md:inline">Workspace</span>
                         <ChevronDown className="w-2.5 h-2.5 opacity-50" />
                       </button>
                     </PopoverTrigger>
@@ -318,27 +347,11 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                         Open Folder
                       </button>
                       <button
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        Upload File
-                      </button>
-                      <button
+                        onClick={() => setShowClone(true)}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        Download File
-                      </button>
-                      <div className="h-px bg-white/5 my-1" />
-                      <button
-                        onClick={() => setShowHostPanel(!showHostPanel)}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Folder className="w-3.5 h-3.5" />
-                          File Panel
-                        </span>
-                        {showHostPanel && <span className="text-[9px] text-emerald-400">●</span>}
+                        Clone Git Repo
                       </button>
                     </PopoverContent>
                   </Popover>
@@ -384,6 +397,39 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
           if (onUpdate) onUpdate({ mountedPath: path });
         }}
       />
+      {showClone && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { setShowClone(false); setCloneError(''); }}>
+          <div className="bg-zinc-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-medium text-white mb-1">Clone Git Repository</h3>
+            <p className="text-[11px] text-zinc-500 mb-4">Enter the repository URL. GitHub HTTPS URLs will be auto-converted to SSH.</p>
+            <input
+              autoFocus
+              value={cloneUrl}
+              onChange={(e) => setCloneUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleClone(); }}
+              placeholder="https://github.com/user/repo or git@github.com:user/repo.git"
+              className="w-full h-9 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono mb-3"
+            />
+            {cloneError && <p className="text-[11px] text-red-400 mb-3">{cloneError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setShowClone(false); setCloneError(''); }}
+                className="h-8 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClone}
+                disabled={!cloneUrl.trim() || cloning}
+                className="h-8 px-4 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              >
+                {cloning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                Clone
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
 import { getChatState } from './conversation-monitor.mjs';
 import { fetchWorkspaceQuota } from './quota.mjs';
+import { SshKey } from './models/ssh-key.mjs';
 import {
   gpiBootstrap,
   gpiSendMessage,
@@ -20,6 +21,7 @@ import {
   gpiStartCascade,
   gpiCancelInvocation,
   gpiGetModels,
+  gpiDiscoverModelUid,
   trajectoryToConversation,
 } from './gpi.mjs';
 
@@ -327,11 +329,14 @@ function setupWorkspaceRoutes(app, broadcast) {
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     const text = req.body.text;
     if (!text) return res.status(400).json({ ok: false, error: 'missing text' });
+    console.log(`[Send] Message for ${req.params.id}: "${text.substring(0, 80)}"`);
 
     try {
       let cascadeId = workspace.gpi?.activeCascadeId;
       if (!cascadeId) {
+        console.log('[Send] No active cascade, starting new one...');
         const newChat = await gpiStartCascade(workspace);
+        console.log('[Send] StartCascade result:', JSON.stringify(newChat).substring(0, 300));
         if (newChat.ok && newChat.data?.cascadeId) {
           cascadeId = newChat.data.cascadeId;
           await Workspace.findByIdAndUpdate(workspace._id, {
@@ -341,30 +346,33 @@ function setupWorkspaceRoutes(app, broadcast) {
           return res.json({ ok: false, error: 'failed_to_create_cascade', details: newChat });
         }
       }
+      console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
 
       let modelUid = workspace.gpi?.selectedModelUid || undefined;
-      const modelLabel = workspace.gpi?.selectedModel || '';
 
-      // If we have a label but no UID, resolve it dynamically
-      if (!modelUid && modelLabel) {
+      if (!modelUid) {
         try {
-          const modelsResult = await gpiGetModels(workspace);
-          if (modelsResult.ok && modelsResult.models?.length) {
-            const match = modelsResult.models.find(m => m.label === modelLabel);
-            if (match?.modelUid) {
-              modelUid = match.modelUid;
-              // Cache it for next time
+          const traj = await gpiGetTrajectory(workspace, cascadeId);
+          if (traj.ok && traj.data) {
+            const full = JSON.stringify(traj.data);
+            const match = full.match(/"planModel":"([^"]+)"/);
+            if (match) {
+              modelUid = match[1];
               await Workspace.findByIdAndUpdate(workspace._id, {
                 'gpi.selectedModelUid': modelUid,
               });
+              console.log(`[Send] Model from trajectory: ${modelUid}`);
             }
           }
         } catch { }
       }
 
       const result = await gpiSendMessage(workspace, cascadeId, text, modelUid);
-      res.json({ ok: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
+      console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
+      const error = result?.data?.message || result?.error || undefined;
+      res.json({ ok: result.ok, error, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
     } catch (err) {
+      console.error(`[Send] Error:`, err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -387,9 +395,16 @@ function setupWorkspaceRoutes(app, broadcast) {
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
       const gpiResult = await gpiGetModels(workspace);
-      const current = workspace.gpi?.selectedModel || '';
+      let current = workspace.gpi?.selectedModel || '';
 
       if (gpiResult.ok && gpiResult.models?.length) {
+        if (!current) {
+          const first = gpiResult.models[0];
+          current = first.label;
+          const update = { 'gpi.selectedModel': current };
+          if (first.modelUid) update['gpi.selectedModelUid'] = first.modelUid;
+          await Workspace.findByIdAndUpdate(workspace._id, update);
+        }
         const models = gpiResult.models.map(m => ({
           label: m.label,
           modelUid: m.modelUid || '',
@@ -402,7 +417,6 @@ function setupWorkspaceRoutes(app, broadcast) {
         return res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
       }
 
-      // Fallback: DOM scraping if gRPC fails
       const result = await wsEval(workspace, `(() => {
         const btn = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
         const container = btn ? btn.closest('button, div[class*="cursor-"]') : null;
@@ -421,7 +435,12 @@ function setupWorkspaceRoutes(app, broadcast) {
         });
       })()`, { target: 'workbench' });
       const scraped = result?.results?.[0]?.value || result;
-      const models = (scraped?.models || []).map(m => ({
+      const allScraped = scraped?.models || [];
+      if (!current && allScraped.length) {
+        current = allScraped[0];
+        await Workspace.findByIdAndUpdate(workspace._id, { 'gpi.selectedModel': current });
+      }
+      const models = allScraped.map(m => ({
         label: m,
         modelUid: '',
         selected: m === current,
@@ -694,6 +713,44 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const result = await execInContainer(workspace.containerId, `cat ${JSON.stringify(filePath)}`);
       res.json({ ok: true, content: result, path: filePath });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.post('/api/workspaces/:id/git/clone', async (req, res) => {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace || !workspace.containerId) return res.status(404).json({ error: 'Workspace not found or not running' });
+
+    let { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'url required' });
+
+    const httpsMatch = url.match(/^https?:\/\/(github\.com|gitlab\.com)\/(.+?)(?:\.git)?$/);
+    if (httpsMatch) {
+      url = `git@${httpsMatch[1]}:${httpsMatch[2]}.git`;
+    }
+
+    try {
+      const sshKeys = await SshKey.find();
+      if (sshKeys.length > 0) {
+        await execInContainer(workspace.containerId, 'mkdir -p /home/aguser/.ssh && chmod 700 /home/aguser/.ssh');
+        for (const key of sshKeys) {
+          const safeName = key.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const escaped = key.privateKey.replace(/'/g, "'\\''");
+          await execInContainer(workspace.containerId, `printf '%s\\n' '${escaped}' > /home/aguser/.ssh/${safeName} && chmod 600 /home/aguser/.ssh/${safeName}`);
+          if (key.publicKey) {
+            const escapedPub = key.publicKey.replace(/'/g, "'\\''");
+            await execInContainer(workspace.containerId, `printf '%s\\n' '${escapedPub}' > /home/aguser/.ssh/${safeName}.pub && chmod 644 /home/aguser/.ssh/${safeName}.pub`);
+          }
+        }
+        await execInContainer(workspace.containerId, 'ssh-keyscan -H github.com gitlab.com >> /home/aguser/.ssh/known_hosts 2>/dev/null; chmod 644 /home/aguser/.ssh/known_hosts');
+        if (sshKeys.length === 1) {
+          const safeName = sshKeys[0].name.replace(/[^a-zA-Z0-9_-]/g, '_');
+          await execInContainer(workspace.containerId, `cp /home/aguser/.ssh/${safeName} /home/aguser/.ssh/id_rsa && chmod 600 /home/aguser/.ssh/id_rsa`);
+        }
+      }
+
+      const result = await execInContainer(workspace.containerId, `cd /workspace && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone ${JSON.stringify(url)} 2>&1`);
+      res.json({ ok: true, output: result });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

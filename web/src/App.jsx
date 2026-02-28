@@ -65,6 +65,7 @@ function AppWithAuth() {
 function AuthenticatedApp({ auth }) {
   const push = usePushNotifications();
   const [viewMode, setViewMode] = useState('chat');
+  const [editingFile, setEditingFile] = useState(null);
   const [showHostPanel, setShowHostPanel] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const [showGit, setShowGit] = useState(false);
@@ -86,6 +87,7 @@ function AuthenticatedApp({ auth }) {
     oauthPending,
     submitOAuthCallback,
     cancelOAuth,
+    loaded,
     ws,
   } = useWorkspaces();
 
@@ -97,6 +99,13 @@ function AuthenticatedApp({ auth }) {
   };
 
   const renderContent = () => {
+    if (!loaded) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="w-6 h-6 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" />
+        </div>
+      );
+    }
     if (!activeWorkspace) {
       return <EmptyView onCreate={() => setShowCreateDialog(true)} />;
     }
@@ -111,7 +120,7 @@ function AuthenticatedApp({ auth }) {
         return viewMode === 'vnc' ? (
           <VncViewer workspaceId={activeWorkspace._id} ag={ag} />
         ) : (
-          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} />
+          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} editingFile={editingFile} setEditingFile={setEditingFile} />
         );
       case 'stopped':
         return <StoppedView workspace={activeWorkspace} onStart={() => startWorkspace(activeWorkspace._id)} />;

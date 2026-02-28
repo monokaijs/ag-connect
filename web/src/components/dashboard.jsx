@@ -4,7 +4,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ConversationItem } from '@/components/conversation-item';
 import { WorkspaceHostPanel } from '@/components/host-panel';
 import GitPanel from '@/components/git-panel';
-import { FilePreviewDialog } from '@/components/file-preview-dialog';
+import FileEditor from '@/components/file-editor';
+
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import {
   Zap,
@@ -213,7 +214,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
   );
 }
 
-export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit }) {
+export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit, editingFile, setEditingFile }) {
   const { status, statusText, currentModel, setCurrentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -225,18 +226,15 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const [modelsLoading, setModelsLoading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [previewFile, setPreviewFile] = useState(null);
   const [activeTab, setActiveTab] = useState('explorer');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const scrollRef = useRef(null);
   const isAtBottomRef = useRef(true);
 
-
-
   const handleFileOpen = (fullPath) => {
-    if (!fullPath) return;
-    setPreviewFile(fullPath);
+    if (!fullPath || !setEditingFile) return;
+    setEditingFile(fullPath);
   };
 
   useEffect(() => {
@@ -571,7 +569,15 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
           </div>
         ) : (
           <div className="flex flex-col h-full w-full min-w-0 bg-[#0a0a0a]">
-            {chatContent}
+            {editingFile ? (
+              <FileEditor
+                fullPath={editingFile}
+                ag={ag}
+                workspace={workspace}
+                onClose={() => setEditingFile(null)}
+                onOpenFile={(path) => setEditingFile(path)}
+              />
+            ) : chatContent}
           </div>
         )
       ) : (
@@ -585,7 +591,15 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
             </>
           )}
           <Panel order={2} defaultSize={showHostPanel ? 80 : 100} minSize={30} className="flex flex-col min-w-0 bg-[#0a0a0a]">
-            {chatContent}
+            {editingFile ? (
+              <FileEditor
+                fullPath={editingFile}
+                ag={ag}
+                workspace={workspace}
+                onClose={() => setEditingFile(null)}
+                onOpenFile={(path) => setEditingFile(path)}
+              />
+            ) : chatContent}
           </Panel>
         </PanelGroup>
       )}
@@ -595,12 +609,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
         fetchConversations={fetchConversations}
         selectConversation={selectConversation}
       />
-      <FilePreviewDialog
-        open={!!previewFile}
-        fullPath={previewFile}
-        onClose={() => setPreviewFile(null)}
-        ag={ag}
-      />
+
     </div>
   );
 }

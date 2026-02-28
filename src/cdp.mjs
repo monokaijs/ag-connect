@@ -1,6 +1,6 @@
 import http from 'http';
 
-const CDP_PORTS = [9000, 9001, 9002, 9003, 9222, 9229, 9333];
+const CDP_PORTS = [9222];
 
 function getJson(url) {
   return new Promise((resolve, reject) => {

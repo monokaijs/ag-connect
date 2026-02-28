@@ -50,6 +50,11 @@ class WorkspaceMonitor {
       if (result?.csrf || result?.installed) {
         this.bootstrapped = true;
         console.log(`[GPI] Bootstrap for ${this.wsId}: csrf=${!!result.csrf}`);
+        if (result.modelUid) {
+          const { Workspace } = await import('./models/workspace.mjs');
+          await Workspace.findByIdAndUpdate(this.wsId, { 'gpi.selectedModelUid': result.modelUid });
+          console.log(`[GPI] Captured modelUid for ${this.wsId}: ${result.modelUid.substring(0, 20)}`);
+        }
       }
     } catch (err) {
       console.error(`[GPI] Bootstrap failed for ${this.wsId}:`, err.message);

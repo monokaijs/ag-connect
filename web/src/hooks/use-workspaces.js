@@ -21,6 +21,7 @@ function authFetch(url, opts = {}) {
 export function useWorkspaces() {
   const [workspaces, setWorkspaces] = useState([]);
   const [activeId, _setActiveId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
   const activeIdRef = useRef(null);
   const wsRef = useRef(null);
   const [wsInstance, setWsInstance] = useState(null);
@@ -177,6 +178,8 @@ export function useWorkspaces() {
       }
     } catch (err) {
       console.error('[workspaces] fetch error:', err);
+    } finally {
+      setLoaded(true);
     }
   };
 
@@ -311,6 +314,7 @@ export function useWorkspaces() {
     submitOAuthCallback,
     cancelOAuth,
     fetchWorkspaces,
+    loaded,
     ws: wsInstance,
   };
 }

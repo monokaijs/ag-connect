@@ -5,7 +5,7 @@ import { getAuthHeaders } from './use-auth';
 export function useAgConnect(workspace, ws) {
   const [status, setStatus] = useState('disconnected');
   const [statusText, setStatusText] = useState('');
-  const [currentModel, setCurrentModel] = useState('');
+  const [currentModel, setCurrentModel] = useState(workspace?.gpi?.selectedModel || '');
   const [isBusy, setIsBusy] = useState(false);
   const [items, setItems] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
