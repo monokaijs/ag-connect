@@ -19,7 +19,7 @@ echo "[entrypoint] Xvfb started on display :99"
 dbus-daemon --session --fork --address="unix:path=/tmp/dbus-session" 2>/dev/null || true
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/dbus-session"
 
-FOLDER_URI="file://${WORKSPACE_FOLDER:-/home/aguser}"
+FOLDER_URI="file://${WORKSPACE_FOLDER:-/workspace}"
 
 echo "[entrypoint] Starting Antigravity IDE with remote debugging on port 9222..."
 echo "[entrypoint] Opening folder: $FOLDER_URI"

@@ -123,9 +123,9 @@ export function WorkspaceHostPanel({ workspace, ag, onFileOpen }) {
   };
 
   useEffect(() => {
-    if (!workspace.mountedPath) return;
+    if (workspace.status !== 'running') return;
     refreshTree();
-  }, [workspace.mountedPath, ag]);
+  }, [workspace.status, ag]);
 
   const handleSelect = (filePath) => {
     const fullPath = filePath.startsWith('/workspace') ? filePath : `/workspace/${filePath}`;
@@ -145,16 +145,6 @@ export function WorkspaceHostPanel({ workspace, ag, onFileOpen }) {
     reader.readAsText(file);
     e.target.value = '';
   };
-
-  if (!workspace?.mountedPath) {
-    return (
-      <div className="flex flex-col h-full bg-[#0c0c0c] w-full shrink-0 items-center justify-center text-center gap-3 px-6 overflow-hidden">
-        <Folder className="w-8 h-8 text-zinc-600" />
-        <p className="text-sm text-zinc-400">No Host Folder Mounted</p>
-        <p className="text-[11px] text-zinc-500">Stop this workspace to configure a host location.</p>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full bg-[#0c0c0c] w-full shrink-0 overflow-hidden">

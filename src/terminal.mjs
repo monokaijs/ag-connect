@@ -70,7 +70,7 @@ terminalWss.on('connection', async (ws, req) => {
       }
     }
 
-    const workDir = workspace.mountedPath ? '/workspace' : '/root';
+    const workDir = '/workspace';
     exec = await container.exec({
       Cmd: ['/bin/bash'],
       AttachStdin: true,

@@ -83,11 +83,8 @@ async function createWorkspaceContainer(workspace, broadcast) {
       name: containerName,
       ExposedPorts: { '9223/tcp': {} },
       HostConfig: hostConfig,
+      Env: ['WORKSPACE_FOLDER=/workspace'],
     };
-
-    if (ws.mountedPath) {
-      createOpts.Env = ['WORKSPACE_FOLDER=/workspace'];
-    }
 
     const container = await docker.createContainer(createOpts);
 

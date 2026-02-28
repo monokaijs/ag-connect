@@ -48,7 +48,7 @@ RUN mkdir -p /etc/apt/keyrings \
 
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
-RUN useradd -m -s /bin/bash aguser
+RUN useradd -m -s /bin/bash aguser && mkdir -p /workspace && chown aguser:aguser /workspace
 USER aguser
 WORKDIR /home/aguser
 

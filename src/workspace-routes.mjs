@@ -154,21 +154,33 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.get('/api/workspaces/:id/fs/list', async (req, res) => {
     try {
       const workspace = await Workspace.findById(req.params.id);
-      if (!workspace || !workspace.mountedPath) return res.json([]);
-      const base = toLocalPath(workspace.mountedPath);
+      if (!workspace) return res.json([]);
       const sub = req.query.path || '';
-      const target = path.join(base, sub);
-      if (!target.startsWith(base)) return res.status(403).json({ error: 'Out of bounds' });
 
-      const stats = await fs.stat(target).catch(() => null);
-      if (!stats || !stats.isDirectory()) return res.json([]);
+      if (workspace.mountedPath) {
+        const base = toLocalPath(workspace.mountedPath);
+        const target = path.join(base, sub);
+        if (!target.startsWith(base)) return res.status(403).json({ error: 'Out of bounds' });
+        const stats = await fs.stat(target).catch(() => null);
+        if (!stats || !stats.isDirectory()) return res.json([]);
+        const dirents = await fs.readdir(target, { withFileTypes: true });
+        const items = dirents.map(d => ({
+          name: d.name,
+          type: d.isDirectory() ? 'directory' : 'file',
+          path: path.join(sub, d.name),
+        }));
+        return res.json(items.sort((a, b) => (b.type === 'directory') - (a.type === 'directory') || a.name.localeCompare(b.name)));
+      }
 
-      const dirents = await fs.readdir(target, { withFileTypes: true });
-      const items = dirents.map(d => ({
-        name: d.name,
-        type: d.isDirectory() ? 'directory' : 'file',
-        path: path.join(sub, d.name),
-      }));
+      if (!workspace.containerId) return res.json([]);
+      const wsDir = '/workspace';
+      const target = sub ? `${wsDir}/${sub}` : wsDir;
+      const raw = await execInContainer(workspace.containerId, `ls -1paL ${JSON.stringify(target)} 2>/dev/null || true`);
+      const items = raw.split('\n').filter(l => l && l !== './' && l !== '../').map(l => {
+        const isDir = l.endsWith('/');
+        const name = isDir ? l.slice(0, -1) : l;
+        return { name, type: isDir ? 'directory' : 'file', path: sub ? `${sub}/${name}` : name };
+      }).filter(i => i.name && !i.name.startsWith('.config'));
       res.json(items.sort((a, b) => (b.type === 'directory') - (a.type === 'directory') || a.name.localeCompare(b.name)));
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -742,7 +754,7 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
 
-      const wsDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
+      const wsDir = '/workspace';
       const cmd = [
         `rm -rf /tmp/_clone_tmp`,
         `&& GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} /tmp/_clone_tmp 2>&1`,
