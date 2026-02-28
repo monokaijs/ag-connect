@@ -19,7 +19,7 @@ import { isNative } from '@/lib/capacitor';
 import { hasServerEndpoint, setServerEndpoint } from '@/config';
 import { Plus, Settings, X } from 'lucide-react';
 import { WORKSPACE_ICONS, ICON_COLORS } from '@/components/create-workspace-dialog';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 export default function App() {
   const [serverReady, setServerReady] = useState(!isNative || hasServerEndpoint());
@@ -118,7 +118,7 @@ function AuthenticatedApp({ auth }) {
         return <LoginView workspace={activeWorkspace} onLogin={() => loginWorkspace(activeWorkspace._id)} />;
       case 'running':
         return viewMode === 'vnc' ? (
-          <VncViewer workspaceId={activeWorkspace._id} ag={ag} />
+          <VncViewer ref={vncRef} workspaceId={activeWorkspace._id} ag={ag} />
         ) : (
           <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} editingFile={editingFile} setEditingFile={setEditingFile} />
         );
@@ -132,6 +132,7 @@ function AuthenticatedApp({ auth }) {
   };
 
   const [showMobileNav, setShowMobileNav] = useState(false);
+  const vncRef = useRef(null);
 
   return (
     <div className="flex h-full bg-zinc-950 safe-area-top safe-area-bottom safe-area-x">
@@ -172,6 +173,7 @@ function AuthenticatedApp({ auth }) {
               setShowTerminal={setShowTerminal}
               quota={quota}
               onOpenMobileNav={() => setShowMobileNav(true)}
+              vncRef={vncRef}
             />
             <div className="flex-1 overflow-hidden flex flex-col relative">
               <div className="flex-1 overflow-hidden flex flex-col relative">

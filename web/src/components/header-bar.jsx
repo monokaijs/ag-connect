@@ -1,4 +1,4 @@
-import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, ChevronDown, Download, Trash2, Pencil, PanelLeft, Menu } from 'lucide-react';
+import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, ChevronDown, Download, Trash2, Pencil, PanelLeft, Menu, ZoomIn, ZoomOut, RotateCcw, Keyboard, Maximize } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { FolderPickerDialog } from './folder-picker';
 import { useConfirm } from './confirm-dialog';
@@ -74,7 +74,7 @@ function prettifyModelName(name) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota, onOpenMobileNav }) {
+export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota, onOpenMobileNav, vncRef }) {
   if (!workspace) return null;
 
   const isRunning = workspace.status === 'running';
@@ -373,6 +373,59 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                     <span className="hidden md:inline">History</span>
                   </button>
 
+                </>
+              )}
+              {viewMode === 'vnc' && (
+                <>
+                  {['480p', '720p', '1080p'].map(q => (
+                    <button
+                      key={q}
+                      onClick={() => vncRef?.current?.changeQuality(q)}
+                      className={`h-6 px-2 rounded text-[11px] font-bold transition-all ${vncRef?.current?.quality === q ? 'bg-white/15 text-white ring-1 ring-white/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                  <div className="w-px h-4 bg-white/10 mx-1" />
+                  <button
+                    onClick={() => vncRef?.current?.zoomOut()}
+                    title="Zoom out"
+                    className="flex items-center h-6 px-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] text-zinc-500 min-w-[28px] text-center font-mono">{Math.round((vncRef?.current?.zoom || 1) * 100)}%</span>
+                  <button
+                    onClick={() => vncRef?.current?.zoomIn()}
+                    title="Zoom in"
+                    className="flex items-center h-6 px-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                  {(vncRef?.current?.zoom || 1) > 1 && (
+                    <button
+                      onClick={() => vncRef?.current?.resetZoom()}
+                      title="Reset zoom"
+                      className="flex items-center h-6 px-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                    </button>
+                  )}
+                  <div className="w-px h-4 bg-white/10 mx-1" />
+                  <button
+                    onClick={() => vncRef?.current?.openKeyboard()}
+                    title="Open keyboard"
+                    className="flex items-center gap-1 h-6 px-1.5 rounded text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <Keyboard className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => vncRef?.current?.toggleFullscreen()}
+                    title="Fullscreen"
+                    className="flex items-center gap-1 h-6 px-1.5 rounded text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <Maximize className="w-3.5 h-3.5" />
+                  </button>
                 </>
               )}
             </>

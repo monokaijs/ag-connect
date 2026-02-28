@@ -1,41 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { getWsBase } from '../config';
-import { Loader2, X, AlertCircle, Maximize, Minimize, Keyboard, ZoomIn, ZoomOut, RotateCcw, MonitorSmartphone } from 'lucide-react';
+import { Loader2, X, AlertCircle } from 'lucide-react';
 import { getAuthToken } from '../hooks/use-auth';
 
-const QUALITY_OPTIONS = ['480p', '720p', '1080p'];
-
-function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    const check = () => setMobile(window.innerWidth < 768 || 'ontouchstart' in window);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
-  return mobile;
-}
-
-export function VncViewer({ workspaceId, ag }) {
+export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag }, ref) {
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState(null);
   const [targets, setTargets] = useState([]);
   const [activeTargetId, setActiveTargetId] = useState(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [quality, setQuality] = useState('720p');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [showToolbar, setShowToolbar] = useState(true);
   const wsRef = useRef(null);
   const containerRef = useRef(null);
-  const wrapperRef = useRef(null);
   const metadataRef = useRef(null);
   const hiddenInputRef = useRef(null);
-  const isMobile = useIsMobile();
 
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1 });
   const panRef = useRef({ active: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 });
-  const toolbarTimer = useRef(null);
 
   useEffect(() => {
     if (!ag?.fetchTargets) return;
@@ -71,7 +53,6 @@ export function VncViewer({ workspaceId, ag }) {
     wsRef.current = ws;
 
     ws.onopen = () => setError(null);
-
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -83,10 +64,8 @@ export function VncViewer({ workspaceId, ag }) {
         }
       } catch { }
     };
-
     ws.onerror = () => setError('Connection failed. Please ensure the workspace is running.');
     ws.onclose = () => { };
-
     return () => ws.close();
   }, [workspaceId, activeTargetId]);
 
@@ -94,21 +73,6 @@ export function VncViewer({ workspaceId, ag }) {
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: 'quality', quality: q }));
     }
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
-    if (!wrapperRef.current) return;
-    if (!document.fullscreenElement) {
-      wrapperRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { });
-    } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => { });
-    }
-  }, []);
-
-  useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
   const resetZoom = useCallback(() => {
@@ -127,6 +91,34 @@ export function VncViewer({ workspaceId, ag }) {
       return next;
     });
   }, []);
+
+  const openKeyboard = useCallback(() => {
+    if (hiddenInputRef.current) {
+      hiddenInputRef.current.focus();
+      hiddenInputRef.current.click();
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current?.closest('[data-vnc-root]');
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen().catch(() => { });
+    } else {
+      document.exitFullscreen().catch(() => { });
+    }
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    quality,
+    zoom,
+    changeQuality,
+    zoomIn,
+    zoomOut,
+    resetZoom,
+    openKeyboard,
+    toggleFullscreen,
+  }), [quality, zoom, changeQuality, zoomIn, zoomOut, resetZoom, openKeyboard, toggleFullscreen]);
 
   const getCoords = useCallback((clientX, clientY) => {
     if (!containerRef.current || !metadataRef.current) return null;
@@ -183,18 +175,10 @@ export function VncViewer({ workspaceId, ag }) {
     }));
   }, [getCoords]);
 
-  const handlePointerDown = (e) => {
-    if (isMobile && e.pointerType === 'touch') return;
-    sendMouse('mousePressed', e);
-  };
-  const handlePointerUp = (e) => {
-    if (isMobile && e.pointerType === 'touch') return;
-    sendMouse('mouseReleased', e);
-  };
-  const handlePointerMove = (e) => {
-    if (isMobile && e.pointerType === 'touch') return;
-    sendMouse('mouseMoved', e);
-  };
+  const isMobile = 'ontouchstart' in window;
+  const handlePointerDown = (e) => { if (isMobile && e.pointerType === 'touch') return; sendMouse('mousePressed', e); };
+  const handlePointerUp = (e) => { if (isMobile && e.pointerType === 'touch') return; sendMouse('mouseReleased', e); };
+  const handlePointerMove = (e) => { if (isMobile && e.pointerType === 'touch') return; sendMouse('mouseMoved', e); };
 
   const handleWheel = useCallback((e) => {
     if (e.ctrlKey) {
@@ -228,9 +212,7 @@ export function VncViewer({ workspaceId, ag }) {
       panRef.current = { active: true, startX: e.touches[0].clientX, startY: e.touches[0].clientY, startPanX: pan.x, startPanY: pan.y };
     } else if (e.touches.length === 1) {
       const now = Date.now();
-      if (now - lastTap.current < 300) {
-        resetZoom();
-      }
+      if (now - lastTap.current < 300) resetZoom();
       lastTap.current = now;
     }
   }, [zoom, pan, resetZoom]);
@@ -260,16 +242,10 @@ export function VncViewer({ workspaceId, ag }) {
           const t = e.changedTouches[0];
           const coords = getCoords(t.clientX, t.clientY);
           if (coords && wsRef.current?.readyState === 1) {
-            wsRef.current.send(JSON.stringify({
-              type: 'mouse',
-              params: { type: 'mousePressed', ...coords, button: 'left', clickCount: 1, modifiers: 0 },
-            }));
+            wsRef.current.send(JSON.stringify({ type: 'mouse', params: { type: 'mousePressed', ...coords, button: 'left', clickCount: 1, modifiers: 0 } }));
             setTimeout(() => {
               if (wsRef.current?.readyState === 1) {
-                wsRef.current.send(JSON.stringify({
-                  type: 'mouse',
-                  params: { type: 'mouseReleased', ...coords, button: 'left', clickCount: 1, modifiers: 0 },
-                }));
+                wsRef.current.send(JSON.stringify({ type: 'mouse', params: { type: 'mouseReleased', ...coords, button: 'left', clickCount: 1, modifiers: 0 } }));
               }
             }, 50);
           }
@@ -279,26 +255,13 @@ export function VncViewer({ workspaceId, ag }) {
     }
   }, [getCoords, pan]);
 
-  const openKeyboard = useCallback(() => {
-    if (hiddenInputRef.current) {
-      hiddenInputRef.current.focus();
-      hiddenInputRef.current.click();
-    }
-  }, []);
-
   const handleHiddenInput = useCallback((e) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
     const text = e.target.value;
     if (!text) return;
     for (const char of text) {
-      wsRef.current.send(JSON.stringify({
-        type: 'key',
-        params: { type: 'keyDown', text: char, unmodifiedText: char, key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 },
-      }));
-      wsRef.current.send(JSON.stringify({
-        type: 'key',
-        params: { type: 'keyUp', key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 },
-      }));
+      wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyDown', text: char, unmodifiedText: char, key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 } }));
+      wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyUp', key: char, code: '', windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0), modifiers: 0 } }));
     }
     e.target.value = '';
   }, []);
@@ -311,15 +274,7 @@ export function VncViewer({ workspaceId, ag }) {
       if (e.ctrlKey) modifiers |= 2;
       if (e.metaKey) modifiers |= 4;
       if (e.shiftKey) modifiers |= 8;
-      wsRef.current.send(JSON.stringify({
-        type: 'key',
-        params: {
-          type: 'keyDown',
-          keyIdentifier: e.key, code: e.code, key: e.key,
-          windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
-          modifiers,
-        },
-      }));
+      wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyDown', keyIdentifier: e.key, code: e.code, key: e.key, windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode, modifiers } }));
       e.preventDefault();
     }
   }, []);
@@ -332,15 +287,7 @@ export function VncViewer({ workspaceId, ag }) {
       if (e.ctrlKey) modifiers |= 2;
       if (e.metaKey) modifiers |= 4;
       if (e.shiftKey) modifiers |= 8;
-      wsRef.current.send(JSON.stringify({
-        type: 'key',
-        params: {
-          type: 'keyUp',
-          keyIdentifier: e.key, code: e.code, key: e.key,
-          windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
-          modifiers,
-        },
-      }));
+      wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyUp', keyIdentifier: e.key, code: e.code, key: e.key, windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode, modifiers } }));
     }
   }, []);
 
@@ -351,18 +298,7 @@ export function VncViewer({ workspaceId, ag }) {
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
-    wsRef.current.send(JSON.stringify({
-      type: 'key',
-      params: {
-        type: 'keyDown',
-        text: e.key.length === 1 ? e.key : undefined,
-        unmodifiedText: e.key.length === 1 ? e.key : undefined,
-        keyIdentifier: e.key, code: e.code, key: e.key,
-        windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
-        autoRepeat: e.repeat, isKeypad: e.location === 3,
-        isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers,
-      },
-    }));
+    wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyDown', text: e.key.length === 1 ? e.key : undefined, unmodifiedText: e.key.length === 1 ? e.key : undefined, keyIdentifier: e.key, code: e.code, key: e.key, windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode, autoRepeat: e.repeat, isKeypad: e.location === 3, isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers } }));
     e.preventDefault();
   };
 
@@ -373,32 +309,9 @@ export function VncViewer({ workspaceId, ag }) {
     if (e.ctrlKey) modifiers |= 2;
     if (e.metaKey) modifiers |= 4;
     if (e.shiftKey) modifiers |= 8;
-    wsRef.current.send(JSON.stringify({
-      type: 'key',
-      params: {
-        type: 'keyUp',
-        keyIdentifier: e.key, code: e.code, key: e.key,
-        windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
-        isKeypad: e.location === 3,
-        isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers,
-      },
-    }));
+    wsRef.current.send(JSON.stringify({ type: 'key', params: { type: 'keyUp', keyIdentifier: e.key, code: e.code, key: e.key, windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode, isKeypad: e.location === 3, isSystemKey: e.altKey || e.ctrlKey || e.metaKey, modifiers } }));
     e.preventDefault();
   };
-
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const timer = setTimeout(() => setShowToolbar(false), 3000);
-    toolbarTimer.current = timer;
-    return () => clearTimeout(timer);
-  }, [isFullscreen]);
-
-  const handleMouseMoveToolbar = useCallback(() => {
-    if (!isFullscreen) return;
-    setShowToolbar(true);
-    clearTimeout(toolbarTimer.current);
-    toolbarTimer.current = setTimeout(() => setShowToolbar(false), 3000);
-  }, [isFullscreen]);
 
   const imgStyle = {
     transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
@@ -407,11 +320,7 @@ export function VncViewer({ workspaceId, ag }) {
   };
 
   return (
-    <div
-      ref={wrapperRef}
-      className="flex flex-col flex-1 w-full h-full bg-[#0a0a0a] overflow-hidden relative"
-      onMouseMove={handleMouseMoveToolbar}
-    >
+    <div data-vnc-root className="flex flex-col flex-1 w-full h-full bg-[#0a0a0a] overflow-hidden relative">
       <input
         ref={hiddenInputRef}
         type="text"
@@ -424,65 +333,6 @@ export function VncViewer({ workspaceId, ag }) {
         onKeyDown={handleHiddenKeyDown}
         onKeyUp={handleHiddenKeyUp}
       />
-
-      <div
-        className={`absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-2 py-1.5 bg-gradient-to-b from-black/80 to-transparent transition-all duration-300 ${isFullscreen && !showToolbar ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-      >
-        <div className="flex items-center gap-1">
-          {QUALITY_OPTIONS.map(q => (
-            <button
-              key={q}
-              onClick={() => changeQuality(q)}
-              className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${quality === q ? 'bg-white/20 text-white ring-1 ring-white/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1">
-          {zoom > 1 && (
-            <button
-              onClick={resetZoom}
-              className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-              title="Reset zoom"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <button
-            onClick={zoomOut}
-            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-            title="Zoom out"
-          >
-            <ZoomOut className="w-3.5 h-3.5" />
-          </button>
-          <span className="text-[10px] text-zinc-500 min-w-[32px] text-center font-mono">{Math.round(zoom * 100)}%</span>
-          <button
-            onClick={zoomIn}
-            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-            title="Zoom in"
-          >
-            <ZoomIn className="w-3.5 h-3.5" />
-          </button>
-          {isMobile && (
-            <button
-              onClick={openKeyboard}
-              className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-              title="Open keyboard"
-            >
-              <Keyboard className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <button
-            onClick={toggleFullscreen}
-            className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-          >
-            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-      </div>
 
       <div
         className="flex-1 w-full min-h-0 flex flex-col items-center justify-center focus:outline-none relative"
@@ -526,7 +376,7 @@ export function VncViewer({ workspaceId, ag }) {
       </div>
 
       {targets.length > 0 && (
-        <div className={`shrink-0 h-10 bg-zinc-950 border-t border-white/5 flex items-center px-2 gap-2 overflow-x-auto no-scrollbar transition-all duration-300 ${isFullscreen && !showToolbar ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <div className="shrink-0 h-10 bg-zinc-950 border-t border-white/5 flex items-center px-2 gap-2 overflow-x-auto no-scrollbar">
           {targets.map(t => (
             <div
               key={t.id}
@@ -554,4 +404,4 @@ export function VncViewer({ workspaceId, ag }) {
       )}
     </div>
   );
-}
+});
