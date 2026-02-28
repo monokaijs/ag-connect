@@ -39,6 +39,7 @@ export function useAgConnect(workspace, ws) {
   }, [api]);
 
   const changeModel = useCallback(async (model, modelUid) => {
+    setCurrentModel(model);
     return api('POST', '/cdp/models/select', { model, modelUid });
   }, [api]);
 
