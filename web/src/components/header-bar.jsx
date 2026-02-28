@@ -74,7 +74,7 @@ function prettifyModelName(name) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota, onOpenMobileNav, vncRef }) {
+export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, onDelete, onUpdate, onClearAuth, viewMode, setViewMode, showHostPanel, setShowHostPanel, showTerminal, setShowTerminal, quota, onOpenMobileNav, vncRef, vncState }) {
   if (!workspace) return null;
 
   const isRunning = workspace.status === 'running';
@@ -381,7 +381,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                     <button
                       key={q}
                       onClick={() => vncRef?.current?.changeQuality(q)}
-                      className={`h-6 px-2 rounded text-[11px] font-bold transition-all ${vncRef?.current?.quality === q ? 'bg-white/15 text-white ring-1 ring-white/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                      className={`h-6 px-2 rounded text-[11px] font-bold transition-all ${vncState?.quality === q ? 'bg-white/15 text-white ring-1 ring-white/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
                     >
                       {q}
                     </button>
@@ -394,7 +394,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                   >
                     <ZoomOut className="w-3.5 h-3.5" />
                   </button>
-                  <span className="text-[10px] text-zinc-500 min-w-[28px] text-center font-mono">{Math.round((vncRef?.current?.zoom || 1) * 100)}%</span>
+                  <span className="text-[10px] text-zinc-500 min-w-[28px] text-center font-mono">{Math.round((vncState?.zoom || 1) * 100)}%</span>
                   <button
                     onClick={() => vncRef?.current?.zoomIn()}
                     title="Zoom in"
@@ -402,7 +402,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                   >
                     <ZoomIn className="w-3.5 h-3.5" />
                   </button>
-                  {(vncRef?.current?.zoom || 1) > 1 && (
+                  {(vncState?.zoom || 1) > 1 && (
                     <button
                       onClick={() => vncRef?.current?.resetZoom()}
                       title="Reset zoom"

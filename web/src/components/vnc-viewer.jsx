@@ -3,7 +3,7 @@ import { getWsBase } from '../config';
 import { Loader2, X, AlertCircle } from 'lucide-react';
 import { getAuthToken } from '../hooks/use-auth';
 
-export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag }, ref) {
+export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onControlsChange }, ref) {
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState(null);
   const [targets, setTargets] = useState([]);
@@ -119,6 +119,10 @@ export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag }, ref)
     openKeyboard,
     toggleFullscreen,
   }), [quality, zoom, changeQuality, zoomIn, zoomOut, resetZoom, openKeyboard, toggleFullscreen]);
+
+  useEffect(() => {
+    onControlsChange?.({ quality, zoom });
+  }, [quality, zoom]);
 
   const getCoords = useCallback((clientX, clientY) => {
     if (!containerRef.current || !metadataRef.current) return null;

@@ -118,7 +118,7 @@ function AuthenticatedApp({ auth }) {
         return <LoginView workspace={activeWorkspace} onLogin={() => loginWorkspace(activeWorkspace._id)} />;
       case 'running':
         return viewMode === 'vnc' ? (
-          <VncViewer ref={vncRef} workspaceId={activeWorkspace._id} ag={ag} />
+          <VncViewer ref={vncRef} workspaceId={activeWorkspace._id} ag={ag} onControlsChange={setVncState} />
         ) : (
           <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} editingFile={editingFile} setEditingFile={setEditingFile} />
         );
@@ -132,6 +132,7 @@ function AuthenticatedApp({ auth }) {
   };
 
   const [showMobileNav, setShowMobileNav] = useState(false);
+  const [vncState, setVncState] = useState({ quality: '720p', zoom: 1 });
   const vncRef = useRef(null);
 
   return (
@@ -174,6 +175,7 @@ function AuthenticatedApp({ auth }) {
               quota={quota}
               onOpenMobileNav={() => setShowMobileNav(true)}
               vncRef={vncRef}
+              vncState={vncState}
             />
             <div className="flex-1 overflow-hidden flex flex-col relative">
               <div className="flex-1 overflow-hidden flex flex-col relative">
