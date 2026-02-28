@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 const workspaceSchema = new mongoose.Schema({
   name: { type: String, default: '' },
+  type: { type: String, enum: ['docker', 'cli'], default: 'docker' },
   status: {
     type: String,
     enum: ['creating', 'initializing', 'needsLogin', 'running', 'stopped', 'error'],
@@ -10,6 +11,8 @@ const workspaceSchema = new mongoose.Schema({
   stage: { type: String, default: '' },
   containerId: { type: String, default: '' },
   containerName: { type: String, default: '' },
+  cliPid: { type: Number, default: 0 },
+  cliPort: { type: Number, default: 0 },
   ports: {
     api: { type: Number, default: 0 },
     debug: { type: Number, default: 0 },

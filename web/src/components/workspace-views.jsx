@@ -161,7 +161,11 @@ function StoppedView({ workspace, onStart }) {
             <FolderOpen className="w-4 h-4 text-zinc-300" />
           </button>
         </div>
-        <p className="text-[10px] text-zinc-500">This directory on your host machine will be mounted to <code className="bg-white/10 px-1 rounded text-zinc-400">/workspace</code>.</p>
+        <p className="text-[10px] text-zinc-500">
+          {workspace.type === 'cli'
+            ? 'This directory will be used as the workspace folder.'
+            : <>This directory on your host machine will be mounted to <code className="bg-white/10 px-1 rounded text-zinc-400">/workspace</code>.</>}
+        </p>
       </div>
       <button
         onClick={handleStart}
@@ -196,7 +200,7 @@ function EmptyView({ onCreate }) {
       <div className="text-center space-y-2">
         <h2 className="text-xl font-medium text-white">Welcome to AG Connect</h2>
         <p className="text-sm text-zinc-400 max-w-md">
-          Create a workspace to spin up an Antigravity IDE instance in a Docker container.
+          Create a workspace to start coding with Antigravity IDE — use Docker or run locally via CLI.
         </p>
       </div>
       <div className="w-full max-w-sm space-y-2">

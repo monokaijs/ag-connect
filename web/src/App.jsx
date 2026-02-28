@@ -94,8 +94,8 @@ function AuthenticatedApp({ auth }) {
   const ag = useAgConnect(activeWorkspace, ws);
   const { quota } = useQuota(activeWorkspace, ws);
 
-  const handleCreate = ({ name, icon, color }) => {
-    createWorkspace(name, '', icon, color);
+  const handleCreate = ({ name, icon, color, type }) => {
+    createWorkspace(name, '', icon, color, type);
   };
 
   const renderContent = () => {

@@ -429,21 +429,24 @@ export async function gpiBootstrap(workspace) {
     return { ...best.value, results: result.results };
   }
 
-  const discovery = await discoverCsrfViaDocker(workspace.containerId);
-  if (discovery?.csrf) {
-    const lsUrl = await discoverLsUrl(workspace);
-    await cdpEvalOnPort(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
-      target: 'workbench',
-      host: workspace.cdpHost,
-      timeout: 5000,
-    });
-    return {
-      ok: true,
-      csrf: discovery.csrf,
-      lsUrl,
-      hasCsrf: true,
-      installed: true,
-    };
+  // Only attempt Docker-based CSRF discovery for Docker workspaces
+  if (workspace.type !== 'cli') {
+    const discovery = await discoverCsrfViaDocker(workspace.containerId);
+    if (discovery?.csrf) {
+      const lsUrl = await discoverLsUrl(workspace);
+      await cdpEvalOnPort(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
+        target: 'workbench',
+        host: workspace.cdpHost,
+        timeout: 5000,
+      });
+      return {
+        ok: true,
+        csrf: discovery.csrf,
+        lsUrl,
+        hasCsrf: true,
+        installed: true,
+      };
+    }
   }
 
   const best = result.results?.[0];

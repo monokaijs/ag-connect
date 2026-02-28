@@ -54,7 +54,12 @@ export default function Sidebar({ workspaces, activeId, onSelect, onCreate, onCl
             >
               <StatusDot status={ws.status} />
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium truncate">{ws.name}</div>
+                <div className="flex items-center gap-1.5">
+                  <div className="text-xs font-medium truncate">{ws.name}</div>
+                  {ws.type === 'cli' && (
+                    <span className="shrink-0 text-[9px] font-medium px-1 py-0.5 rounded bg-teal-500/10 text-teal-400 leading-none">CLI</span>
+                  )}
+                </div>
                 {ws.auth?.email && (
                   <div className="text-[10px] text-zinc-500 truncate">{ws.auth.email}</div>
                 )}

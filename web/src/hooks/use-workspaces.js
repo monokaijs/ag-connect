@@ -183,11 +183,11 @@ export function useWorkspaces() {
     }
   };
 
-  const createWorkspace = async (name, mountedPath, icon, color) => {
+  const createWorkspace = async (name, mountedPath, icon, color, type) => {
     const res = await authFetch(`${getApiBase()}/api/workspaces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, mountedPath, icon, color }),
+      body: JSON.stringify({ name, mountedPath, icon, color, type }),
     });
     return res.json();
   };

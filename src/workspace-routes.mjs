@@ -9,6 +9,12 @@ import {
   startWorkspaceContainer,
   execInContainer,
 } from './docker-manager.mjs';
+import {
+  createCliWorkspace,
+  stopCliWorkspace,
+  removeCliWorkspace,
+  startCliWorkspace,
+} from './cli-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
 
 import { fetchWorkspaceQuota } from './quota.mjs';
@@ -93,9 +99,11 @@ function setupWorkspaceRoutes(app, broadcast) {
   });
 
   app.post('/api/workspaces', async (req, res) => {
-    const { name, mountedPath, icon, color } = req.body || {};
+    const { name, mountedPath, icon, color, type } = req.body || {};
+    const wsType = type === 'cli' ? 'cli' : 'docker';
     const workspace = new Workspace({
       name: name || `Workspace ${Date.now().toString(36)}`,
+      type: wsType,
       mountedPath: mountedPath || '',
       icon: icon ?? -1,
       color: color ?? 0,
@@ -104,7 +112,11 @@ function setupWorkspaceRoutes(app, broadcast) {
     await workspace.save();
     broadcast({ event: 'workspace:created', payload: workspace.toJSON() });
     res.json(workspace);
-    createWorkspaceContainer(workspace, broadcast);
+    if (wsType === 'cli') {
+      createCliWorkspace(workspace, broadcast);
+    } else {
+      createWorkspaceContainer(workspace, broadcast);
+    }
   });
 
   app.get('/api/workspaces/:id', async (req, res) => {
@@ -116,7 +128,11 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.delete('/api/workspaces/:id', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    await removeWorkspaceContainer(workspace);
+    if (workspace.type === 'cli') {
+      await removeCliWorkspace(workspace);
+    } else {
+      await removeWorkspaceContainer(workspace);
+    }
     await Workspace.findByIdAndDelete(req.params.id);
     broadcast({ event: 'workspace:deleted', payload: { id: req.params.id } });
     res.json({ ok: true });
@@ -145,7 +161,11 @@ function setupWorkspaceRoutes(app, broadcast) {
       broadcast({ event: 'workspace:status', payload: { id: workspace._id, status: 'initializing', stage: 'Re-mounting', message: 'Applying new mount path...' } });
       setTimeout(async () => {
         try {
-          await startWorkspaceContainer(workspace, broadcast);
+          if (workspace.type === 'cli') {
+            await startCliWorkspace(workspace, broadcast);
+          } else {
+            await startWorkspaceContainer(workspace, broadcast);
+          }
         } catch (e) { console.error(e); }
       }, 0);
     }
@@ -241,7 +261,11 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/stop', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    await stopWorkspaceContainer(workspace);
+    if (workspace.type === 'cli') {
+      await stopCliWorkspace(workspace);
+    } else {
+      await stopWorkspaceContainer(workspace);
+    }
     broadcast({ event: 'workspace:status', payload: { id: req.params.id, status: 'stopped', stage: '', message: 'Stopped' } });
     res.json({ ok: true });
   });
@@ -250,7 +274,11 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     res.json({ ok: true });
-    startWorkspaceContainer(workspace, broadcast);
+    if (workspace.type === 'cli') {
+      startCliWorkspace(workspace, broadcast);
+    } else {
+      startWorkspaceContainer(workspace, broadcast);
+    }
   });
 
   app.get('/api/workspaces/:id/cdp/chat', async (req, res) => {
@@ -304,9 +332,14 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     res.json({ ok: true });
-    broadcast({ event: 'workspace:status', payload: { id: req.params.id, status: 'initializing', stage: 'Restarting', message: 'Restarting container...' } });
-    await stopWorkspaceContainer(workspace);
-    startWorkspaceContainer(workspace, broadcast);
+    broadcast({ event: 'workspace:status', payload: { id: req.params.id, status: 'initializing', stage: 'Restarting', message: 'Restarting...' } });
+    if (workspace.type === 'cli') {
+      await stopCliWorkspace(workspace);
+      startCliWorkspace(workspace, broadcast);
+    } else {
+      await stopWorkspaceContainer(workspace);
+      startWorkspaceContainer(workspace, broadcast);
+    }
   });
 
   app.post('/api/workspaces/:id/clear-auth', async (req, res) => {
@@ -717,8 +750,17 @@ function setupWorkspaceRoutes(app, broadcast) {
     const filePath = req.query.path;
     if (!filePath) return res.status(400).json({ error: 'path required' });
     try {
-      const result = await execInContainer(workspace.containerId, `cat ${JSON.stringify(filePath)}`);
-      res.json({ ok: true, content: result, path: filePath });
+      if (workspace.type === 'cli') {
+        // CLI workspace: read file directly from local filesystem
+        const fullPath = workspace.mountedPath
+          ? path.resolve(workspace.mountedPath, filePath.replace(/^\/workspace\//, ''))
+          : filePath;
+        const content = await fs.readFile(fullPath, 'utf8');
+        res.json({ ok: true, content, path: filePath });
+      } else {
+        const result = await execInContainer(workspace.containerId, `cat ${JSON.stringify(filePath)}`);
+        res.json({ ok: true, content: result, path: filePath });
+      }
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -727,10 +769,17 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace || !workspace.containerId) return res.status(404).json({ error: 'Workspace not found or not running' });
 
+    // Git clone is not supported for CLI workspaces — use the local terminal instead
+    if (workspace.type === 'cli') {
+      return res.status(400).json({ error: 'Git clone is not available for CLI workspaces. Use your local terminal instead.' });
+    }
+
     let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'url required' });
 
     try {
+
+      // Docker workspace: original Docker exec-based clone
       const sshKeys = await SshKey.find();
       if (sshKeys.length > 0) {
         const httpsMatch = url.match(/^https?:\/\/(github\.com|gitlab\.com)\/(.+?)(?:\.git)?$/);
@@ -740,10 +789,10 @@ function setupWorkspaceRoutes(app, broadcast) {
         await execInContainer(workspace.containerId, 'mkdir -p /home/aguser/.ssh && chmod 700 /home/aguser/.ssh');
         for (const key of sshKeys) {
           const safeName = key.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-          const escaped = key.privateKey.replace(/'/g, "'\\''");
+          const escaped = key.privateKey.replace(/'/g, "'\\\''");
           await execInContainer(workspace.containerId, `printf '%s\\n' '${escaped}' > /home/aguser/.ssh/${safeName} && chmod 600 /home/aguser/.ssh/${safeName}`);
           if (key.publicKey) {
-            const escapedPub = key.publicKey.replace(/'/g, "'\\''");
+            const escapedPub = key.publicKey.replace(/'/g, "'\\\''");
             await execInContainer(workspace.containerId, `printf '%s\\n' '${escapedPub}' > /home/aguser/.ssh/${safeName}.pub && chmod 644 /home/aguser/.ssh/${safeName}.pub`);
           }
         }

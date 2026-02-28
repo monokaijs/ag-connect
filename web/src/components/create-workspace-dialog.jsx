@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Container, Terminal } from 'lucide-react';
 
 const WORKSPACE_ICONS = [
   'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
@@ -31,20 +31,37 @@ const ICON_COLORS = [
   '#3b82f6',
 ];
 
+const WORKSPACE_TYPES = [
+  {
+    value: 'docker',
+    label: 'Docker',
+    description: 'Run AG inside a Docker container',
+    Icon: Container,
+  },
+  {
+    value: 'cli',
+    label: 'Local CLI',
+    description: 'Run AG locally via npx',
+    Icon: Terminal,
+  },
+];
+
 export default function CreateWorkspaceDialog({ open, onClose, onCreate }) {
   const [name, setName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState(0);
   const [selectedColor, setSelectedColor] = useState(0);
+  const [wsType, setWsType] = useState('docker');
 
   if (!open) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const wsName = name.trim() || 'Untitled Workspace';
-    onCreate({ name: wsName, icon: selectedIcon, color: selectedColor });
+    onCreate({ name: wsName, icon: selectedIcon, color: selectedColor, type: wsType });
     setName('');
     setSelectedIcon(0);
     setSelectedColor(0);
+    setWsType('docker');
     onClose();
   };
 
@@ -60,6 +77,27 @@ export default function CreateWorkspaceDialog({ open, onClose, onCreate }) {
         </div>
 
         <form onSubmit={handleSubmit} className="px-5 pb-5">
+          <div className="mb-4">
+            <label className="block text-[11px] font-medium text-zinc-400 mb-2">Type</label>
+            <div className="grid grid-cols-2 gap-2">
+              {WORKSPACE_TYPES.map(({ value, label, description, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setWsType(value)}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${wsType === value
+                    ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20'
+                    : 'border-white/5 hover:bg-white/5 hover:border-white/10'
+                    }`}
+                >
+                  <Icon className={`w-5 h-5 ${wsType === value ? 'text-indigo-400' : 'text-zinc-500'}`} />
+                  <span className={`text-xs font-medium ${wsType === value ? 'text-white' : 'text-zinc-400'}`}>{label}</span>
+                  <span className="text-[10px] text-zinc-500 text-center leading-tight">{description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="mb-4">
             <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Name</label>
             <input
@@ -135,3 +173,4 @@ export default function CreateWorkspaceDialog({ open, onClose, onCreate }) {
 }
 
 export { WORKSPACE_ICONS, ICON_COLORS };
+
