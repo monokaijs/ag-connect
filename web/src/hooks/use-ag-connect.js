@@ -126,7 +126,7 @@ export function useAgConnect(workspace, ws) {
     } else {
       setStatus('disconnected');
     }
-  }, [workspaceId, workspace?.status, fetchModels, fetchChat]);
+  }, [workspaceId, workspace?.status, fetchModels, syncChat]);
 
   useEffect(() => {
     if (!ws || !workspaceId) return;

@@ -252,11 +252,8 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
 
   ag.openHistory = () => setPickerOpen(true);
 
-  useEffect(() => {
-    if (ag?.syncChat) {
-      ag.syncChat();
-    }
-  }, [ag?.syncChat]);
+
+
 
   const prevItemCount = useRef(0);
   useEffect(() => {
