@@ -243,7 +243,12 @@ async function fetchConversation() {
 
           const text = (step.textContent || '').trim();
           if (text) {
-            const isError = text.toLowerCase().includes('error');
+            const sCls2 = typeof step.className === 'string' ? step.className : '';
+            const stepHtml = step.innerHTML || '';
+            const isError = sCls2.includes('destructive') || sCls2.includes('error') || sCls2.includes('border-red') || sCls2.includes('bg-red') || sCls2.includes('text-red')
+              || stepHtml.includes('lucide-triangle-alert') || stepHtml.includes('lucide-alert') || stepHtml.includes('lucide-circle-x')
+              || (step.querySelector && (step.querySelector('[class*=\"text-red\"]') || step.querySelector('[class*=\"destructive\"]') || step.querySelector('svg.lucide-triangle-alert') || step.querySelector('svg.lucide-circle-x')))
+              || text.toLowerCase().startsWith('error');
             allItems.push({ type: isError ? 'error' : 'tool', text: text.substring(0, 500) });
           }
         }
