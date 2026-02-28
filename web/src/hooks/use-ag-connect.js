@@ -92,6 +92,16 @@ export function useAgConnect(workspace, ws) {
   }, [api]);
 
   useEffect(() => {
+    setItems([]);
+    setStatusText('');
+    setIsBusy(false);
+    setHasAcceptAll(false);
+    setHasRejectAll(false);
+    setCurrentModel('');
+    setStatus('disconnected');
+  }, [workspaceId]);
+
+  useEffect(() => {
     if (workspaceId && workspace?.status === 'running') {
       setStatus('connected');
 

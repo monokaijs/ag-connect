@@ -20,12 +20,21 @@ function authFetch(url, opts = {}) {
 
 export function useWorkspaces() {
   const [workspaces, setWorkspaces] = useState([]);
-  const [activeId, setActiveId] = useState(null);
+  const [activeId, _setActiveId] = useState(null);
+  const activeIdRef = useRef(null);
   const wsRef = useRef(null);
   const [wsInstance, setWsInstance] = useState(null);
   const reconnectTimer = useRef(null);
 
   const wsBackoff = useRef(2000);
+
+  const setActiveId = useCallback((valOrFn) => {
+    _setActiveId(prev => {
+      const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
+      activeIdRef.current = next;
+      return next;
+    });
+  }, []);
 
   const connect = useCallback(() => {
     const token = getAuthToken();
@@ -159,7 +168,7 @@ export function useWorkspaces() {
       if (res.status === 401) return;
       const data = await res.json();
       setWorkspaces(data);
-      if (data.length > 0 && !activeId) {
+      if (data.length > 0 && !activeIdRef.current) {
         setActiveId(data[0]._id);
       }
     } catch (err) {
