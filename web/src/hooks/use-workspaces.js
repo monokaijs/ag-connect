@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getApiBase, getWsBase } from '../config';
 import { getAuthToken, getAuthHeaders } from './use-auth';
+import { isNative } from '@/lib/capacitor';
 
 const GOOGLE_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -204,7 +205,7 @@ export function useWorkspaces() {
     await authFetch(`${getApiBase()}/api/workspaces/${id}/clear-auth`, { method: 'POST' });
   };
 
-  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const isLocalhost = !isNative && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   const LOCALHOST_REDIRECT = 'http://localhost:1/oauth/callback';
 
   const [oauthPending, setOauthPending] = useState(null);

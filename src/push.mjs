@@ -41,13 +41,20 @@ async function tryInitFromDb() {
 }
 
 async function sendPushNotification(title, body) {
-  if (!firebaseApp) return;
+  if (!firebaseApp) {
+    console.log('[FCM] Skipped: firebaseApp not initialized');
+    return;
+  }
 
   try {
     const settings = await getSettings();
     const tokens = settings.pushTokens || [];
-    if (tokens.length === 0) return;
+    if (tokens.length === 0) {
+      console.log('[FCM] Skipped: no tokens registered');
+      return;
+    }
 
+    console.log(`[FCM] Sending to ${tokens.length} device(s): ${title}`);
     const messaging = admin.messaging();
     const message = {
       notification: { title, body },
@@ -55,6 +62,7 @@ async function sendPushNotification(title, body) {
     };
 
     const result = await messaging.sendEachForMulticast(message);
+    console.log(`[FCM] Sent: ${result.successCount} ok, ${result.failureCount} failed`);
 
     if (result.failureCount > 0) {
       const failedTokens = [];
@@ -157,6 +165,46 @@ function setupPushRoutes(app) {
       await settings.save();
 
       res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/settings/push-test', async (req, res) => {
+    try {
+      const settings = await getSettings();
+      const tokens = settings.pushTokens || [];
+      const info = {
+        firebaseInitialized: !!firebaseApp,
+        tokenCount: tokens.length,
+        tokens: tokens.map(t => t.slice(0, 20) + '...'),
+      };
+
+      if (!firebaseApp) {
+        return res.json({ ...info, error: 'Firebase not initialized' });
+      }
+      if (tokens.length === 0) {
+        return res.json({ ...info, error: 'No tokens registered' });
+      }
+
+      const messaging = admin.messaging();
+      const result = await messaging.sendEachForMulticast({
+        notification: {
+          title: 'AG Connect Test',
+          body: 'Push notification is working!',
+        },
+        tokens,
+      });
+
+      res.json({
+        ...info,
+        sent: true,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        errors: result.responses
+          .filter(r => !r.success)
+          .map(r => r.error?.message || 'unknown'),
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { wsProtocol, hostname, isDev } from '../config';
+import { getWsBase } from '../config';
 import { Loader2, X, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getAuthToken } from '../hooks/use-auth';
@@ -42,7 +42,7 @@ export function VncViewer({ workspaceId, ag }) {
     setError(null);
 
     const token = getAuthToken();
-    const wsUrl = `${isDev ? `${wsProtocol}//${hostname}:8787` : `${wsProtocol}//${window.location.host}`}/api/workspaces/${workspaceId}/cdp/vnc?targetId=${activeTargetId}&token=${encodeURIComponent(token || '')}`;
+    const wsUrl = `${getWsBase()}/api/workspaces/${workspaceId}/cdp/vnc?targetId=${activeTargetId}&token=${encodeURIComponent(token || '')}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -248,6 +248,7 @@ export function VncViewer({ workspaceId, ag }) {
           <div
             ref={containerRef}
             className="w-full h-full flex items-center justify-center select-none"
+            style={{ touchAction: 'none' }}
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
             onPointerMove={handlePointerMove}

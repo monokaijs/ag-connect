@@ -2,6 +2,7 @@ import { Workspace } from './models/workspace.mjs';
 import {
   gpiBootstrap,
   gpiGetTrajectory,
+  gpiGetAllTrajectories,
   trajectoryToConversation,
 } from './gpi.mjs';
 import { sendPushNotification } from './push.mjs';
@@ -62,20 +63,25 @@ class WorkspaceMonitor {
       return;
     }
     this.polling = true;
+    if (!this._pollCount) this._pollCount = 0;
+    this._pollCount++;
+    if (this._pollCount % 10 === 1) {
+      console.log(`[Monitor] Poll #${this._pollCount} for ${this.wsId}, isBusy=${this.isBusy}`);
+    }
+    if (this._pollCount === 1) {
+      console.log(`[Monitor] DEBUG: First poll, will dump raw data`);
+    }
 
     try {
       const ws = await Workspace.findById(this.wsId).catch(() => null);
       if (ws) this.workspace = ws;
 
-      const cascadeId = this.workspace.gpi?.activeCascadeId;
-      if (!cascadeId) {
-        this.polling = false;
-        this.schedulePoll();
-        return;
-      }
-
-      const result = await gpiGetTrajectory(this.workspace, cascadeId);
-      if (!result.ok) {
+      const allResult = await gpiGetAllTrajectories(this.workspace);
+      if (!allResult.ok || !allResult.data) {
+        if (!this._loggedFail) {
+          console.log(`[Monitor] Trajectories fail for ${this.wsId}`);
+          this._loggedFail = true;
+        }
         if (!this.bootstrapped) {
           await this.bootstrap();
         }
@@ -83,18 +89,55 @@ class WorkspaceMonitor {
         this.schedulePoll();
         return;
       }
+      this._loggedFail = false;
 
-      const data = trajectoryToConversation(result.data);
+      const summaries = allResult.data?.trajectorySummaries || {};
+      const entries = Object.entries(summaries);
+      if (entries.length === 0) {
+        this.polling = false;
+        this.schedulePoll();
+        return;
+      }
+
+      entries.sort((a, b) => {
+        const ta = new Date(a[1].lastModifiedTime || 0).getTime();
+        const tb = new Date(b[1].lastModifiedTime || 0).getTime();
+        return tb - ta;
+      });
+
+      const [cascadeId, summary] = entries[0];
+      const runStatus = summary.status;
+      const isBusyNow = runStatus === 'CASCADE_RUN_STATUS_RUNNING';
+
+      if (cascadeId !== this._lastCascadeId) {
+        console.log(`[Monitor] Tracking cascade ${cascadeId.slice(0, 8)}... status=${runStatus}`);
+        this._lastCascadeId = cascadeId;
+      }
+
       const wasBusy = this.isBusy;
-      this.isBusy = data.isBusy;
+      this.isBusy = isBusyNow;
 
-      if (wasBusy && !data.isBusy) {
+      if (wasBusy !== isBusyNow) {
+        console.log(`[Monitor] ${this.wsId} busy: ${wasBusy} → ${isBusyNow} (${runStatus})`);
+      }
+
+      if (wasBusy && !isBusyNow) {
         const wsName = this.workspace.name || 'Workspace';
+        console.log(`[Monitor] Triggering push for ${wsName}`);
         sendPushNotification(
           `${wsName} — Task Complete`,
-          data.statusText || 'The agent has finished processing your message.'
+          'The agent has finished processing your message.'
         );
       }
+
+      const result = await gpiGetTrajectory(this.workspace, cascadeId);
+      if (!result.ok) {
+        this.polling = false;
+        this.schedulePoll();
+        return;
+      }
+
+      const data = trajectoryToConversation(result.data);
 
       const key = JSON.stringify({
         items: data.items,
@@ -119,7 +162,9 @@ class WorkspaceMonitor {
         lastData.set(this.wsId, payload);
         this.broadcast({ event: 'conversation:update', payload });
       }
-    } catch { }
+    } catch (err) {
+      console.error(`[Monitor] Poll error [${this.wsId}]:`, err.message);
+    }
 
     this.polling = false;
     this.schedulePoll();

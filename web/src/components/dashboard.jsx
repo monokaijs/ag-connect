@@ -230,6 +230,8 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const [activeTab, setActiveTab] = useState('explorer');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+  const virtuosoRef = useRef(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   const handleFileOpen = (fullPath) => {
     if (!fullPath) return;
@@ -361,8 +363,12 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
           </div>
         ) : (
           <Virtuoso
+            ref={virtuosoRef}
             data={allItems}
-            followOutput='smooth'
+            followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+            alignToBottom
+            atBottomThreshold={150}
+            atBottomStateChange={setIsAtBottom}
             increaseViewportBy={{ top: 400, bottom: 200 }}
             initialTopMostItemIndex={allItems.length - 1}
             itemContent={(index, item) => (
