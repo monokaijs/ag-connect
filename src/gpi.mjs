@@ -379,7 +379,7 @@ function buildCancelExpr(cascadeId) {
 async function evalForWorkspace(workspace, expression, opts = {}) {
   if (workspace.type === 'cli') {
     const result = await cliCdpEval(workspace._id.toString(), expression, opts);
-    return { ok: true, results: [{ value: result }] };
+    return result;
   }
   const port = workspace.cdpPort || workspace.ports?.debug;
   if (!port) return { ok: false, error: 'no_debug_port' };
@@ -410,9 +410,8 @@ async function gpiEval(workspace, expression) {
     console.log('[GPI] CSRF missing, auto-bootstrapping...');
     const bootstrap = await gpiBootstrap(workspace);
     if (bootstrap?.csrf) {
-      const retry = await cdpEvalOnPort(port, expression, {
+      const retry = await evalForWorkspace(workspace, expression, {
         target: 'workbench',
-        host: workspace.cdpHost,
         timeout: 15000,
       });
       if (!retry.ok) return retry;
