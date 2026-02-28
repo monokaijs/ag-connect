@@ -1,5 +1,5 @@
 import { cdpEvalOnPort } from './workspace-cdp.mjs';
-import { cliCdpEval } from './cli-ws.mjs';
+import { cliCdpEval, cliExec } from './cli-ws.mjs';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -436,11 +436,33 @@ export async function gpiBootstrap(workspace) {
     return { ...best.value, results: result.results };
   }
 
-  // Only attempt Docker-based CSRF discovery for Docker workspaces
-  if (workspace.type !== 'cli') {
+  if (workspace.type === 'cli') {
+    try {
+      const psOutput = await cliExec(workspace._id.toString(), 'ps aux 2>/dev/null || tasklist 2>nul', 5000);
+      const csrfMatch = psOutput.match(/--csrf_token\s+([a-f0-9-]+)/);
+      const portMatch = psOutput.match(/--extension_server_port\s+(\d+)/);
+      if (csrfMatch) {
+        const csrf = csrfMatch[1];
+        await evalForWorkspace(workspace, `window.__gpiCsrf = ${JSON.stringify(csrf)}`, {
+          target: 'workbench',
+          timeout: 5000,
+        });
+        return {
+          ok: true,
+          csrf,
+          extensionPort: portMatch ? parseInt(portMatch[1]) : null,
+          hasCsrf: true,
+          installed: true,
+        };
+      }
+    } catch (err) {
+      console.error('[GPI] CLI CSRF discovery failed:', err.message);
+    }
+  } else {
     const discovery = await discoverCsrfViaDocker(workspace.containerId);
     if (discovery?.csrf) {
       const lsUrl = await discoverLsUrl(workspace);
+      const port = workspace.cdpPort || workspace.ports?.debug;
       await cdpEvalOnPort(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
         target: 'workbench',
         host: workspace.cdpHost,

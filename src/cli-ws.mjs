@@ -111,7 +111,8 @@ function handleCliMessage(workspaceId, msg) {
 
     case 'cdp:eval:result':
     case 'cdp:targets:result':
-    case 'cdp:screenshot:result': {
+    case 'cdp:screenshot:result':
+    case 'cli:exec:result': {
       const requestId = msg.payload?.requestId;
       const pending = pendingRequests.get(requestId);
       if (pending) {
@@ -120,7 +121,7 @@ function handleCliMessage(workspaceId, msg) {
         if (msg.payload.error) {
           pending.reject(new Error(msg.payload.error));
         } else {
-          pending.resolve(msg.payload.result || msg.payload.targets || msg.payload.data);
+          pending.resolve(msg.payload.result || msg.payload.targets || msg.payload.data || msg.payload.output);
         }
       }
       break;
@@ -208,6 +209,30 @@ function isCliConnected(workspaceId) {
   return ws && ws.readyState === 1;
 }
 
+function cliExec(workspaceId, command, timeout) {
+  const ws = cliClients.get(workspaceId);
+  if (!ws || ws.readyState !== 1) {
+    return Promise.reject(new Error('CLI client not connected'));
+  }
+
+  const requestId = 'exec-' + (++requestIdCounter);
+  const t = timeout || 5000;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error('CLI exec timeout'));
+    }, t);
+
+    pendingRequests.set(requestId, { resolve, reject, timer });
+
+    ws.send(JSON.stringify({
+      event: 'cli:exec',
+      payload: { requestId, command, timeout: t },
+    }));
+  });
+}
+
 export {
   cliWss,
   cliClients,
@@ -216,4 +241,5 @@ export {
   cliSendCommand,
   isCliConnected,
   setBroadcast,
+  cliExec,
 };

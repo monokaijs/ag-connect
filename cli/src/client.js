@@ -205,6 +205,28 @@ class AgConnectClient {
         this._send({ event: 'pong' });
         break;
       }
+
+      case 'cli:exec': {
+        var execPayload = msg.payload;
+        try {
+          var { execSync } = require('child_process');
+          var output = execSync(execPayload.command, {
+            encoding: 'utf8',
+            timeout: execPayload.timeout || 5000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          this._send({
+            event: 'cli:exec:result',
+            payload: { requestId: execPayload.requestId, output: output },
+          });
+        } catch (err) {
+          this._send({
+            event: 'cli:exec:result',
+            payload: { requestId: execPayload.requestId, output: err.stdout || '', error: err.message },
+          });
+        }
+        break;
+      }
     }
   }
 

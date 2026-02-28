@@ -1,6 +1,6 @@
 {
   "name": "ag-connect",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Run Antigravity IDE locally and connect to your AG Connect server",
   "bin": {
     "ag-connect": "./bin/ag-connect.js"
