@@ -17,6 +17,7 @@ import { setupGitRoutes } from './git-routes.mjs';
 import { setupSettingsRoutes } from './settings-routes.mjs';
 import { setupAuthRoutes, requireAuth, verifyWsToken } from './auth.mjs';
 import { setupPushRoutes, tryInitFromDb } from './push.mjs';
+import { cliWss } from './cli-ws.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -81,6 +82,10 @@ server.on('upgrade', async (request, socket, head) => {
   } else if (pathname.startsWith('/api/workspaces/') && pathname.endsWith('/terminal')) {
     terminalWss.handleUpgrade(request, socket, head, (ws) => {
       terminalWss.emit('connection', ws, request);
+    });
+  } else if (pathname === '/api/cli-ws') {
+    cliWss.handleUpgrade(request, socket, head, (ws) => {
+      cliWss.emit('connection', ws, request);
     });
   } else {
     socket.destroy();

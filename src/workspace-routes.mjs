@@ -16,6 +16,7 @@ import {
   startCliWorkspace,
 } from './cli-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
+import { cliCdpEval, cliGetTargets } from './cli-ws.mjs';
 
 import { fetchWorkspaceQuota } from './quota.mjs';
 import { SshKey } from './models/ssh-key.mjs';
@@ -42,6 +43,12 @@ function toLocalPath(hostPath) {
 }
 
 async function wsEval(workspace, expression, opts = {}) {
+  // CLI workspaces: proxy through the CLI client WebSocket
+  if (workspace.type === 'cli') {
+    const result = await cliCdpEval(workspace._id.toString(), expression, opts);
+    return result;
+  }
+  // Docker workspaces: connect directly to CDP port
   const port = workspace.cdpPort || workspace.ports?.debug;
   if (!port) throw new Error('No debug port');
   return cdpEvalOnPort(port, expression, { ...opts, host: workspace.cdpHost });
