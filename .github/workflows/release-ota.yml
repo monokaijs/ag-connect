@@ -2,7 +2,7 @@ name: Release OTA Update
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'web/**'
 
