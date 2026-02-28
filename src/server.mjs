@@ -6,6 +6,7 @@ import { networkInterfaces } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { connectDB } from './db.mjs';
+import { Workspace } from './models/workspace.mjs';
 import { setupWorkspaceRoutes } from './workspace-routes.mjs';
 import { setupOAuthRoutes } from './oauth.mjs';
 import { startConversationMonitor } from './conversation-monitor.mjs';
@@ -86,10 +87,14 @@ server.on('upgrade', async (request, socket, head) => {
   }
 });
 
-wss.on('connection', (ws) => {
+wss.on('connection', async (ws) => {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.send(JSON.stringify({ event: 'hello', payload: { ts: new Date().toISOString() } }));
+  try {
+    const workspaces = await Workspace.find().sort({ createdAt: -1 });
+    ws.send(JSON.stringify({ event: 'workspace:list', payload: workspaces }));
+  } catch { }
 });
 
 const heartbeatInterval = setInterval(() => {

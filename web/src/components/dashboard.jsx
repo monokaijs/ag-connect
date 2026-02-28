@@ -215,7 +215,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
 }
 
 export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit }) {
-  const { status, statusText, currentModel, isBusy, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
+  const { status, statusText, currentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [optimisticItem, setOptimisticItem] = useState(null);
@@ -356,7 +356,11 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const chatContent = (
     <>
       <div className='min-h-0 flex-1 overflow-hidden'>
-        {allItems.length === 0 ? (
+        {isLoading ? (
+          <div className='flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground h-full'>
+            <Loader2 className='h-6 w-6 animate-spin' />
+          </div>
+        ) : allItems.length === 0 ? (
           <div className='flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground h-full'>
             <MessageSquare className='h-10 w-10 stroke-1' />
             <p className='text-sm'>Send a message or sync the IDE conversation</p>

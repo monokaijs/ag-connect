@@ -108,6 +108,13 @@ export function useWorkspaces() {
         ));
         break;
 
+      case 'workspace:list':
+        setWorkspaces(payload);
+        if (payload.length > 0 && !activeIdRef.current) {
+          setActiveId(payload[0]._id);
+        }
+        break;
+
       case 'workspace:deleted':
         setWorkspaces(prev => {
           const next = prev.filter(w => w._id !== payload.id);
@@ -123,10 +130,7 @@ export function useWorkspaces() {
     fetchWorkspaces();
     handleOAuthCallback();
 
-    const poll = setInterval(fetchWorkspaces, 3000);
-
     return () => {
-      clearInterval(poll);
       clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };

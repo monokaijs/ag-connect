@@ -8,6 +8,7 @@ export function useAgConnect(workspace, ws) {
   const [currentModel, setCurrentModel] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [items, setItems] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [hasAcceptAll, setHasAcceptAll] = useState(false);
   const [hasRejectAll, setHasRejectAll] = useState(false);
 
@@ -67,6 +68,7 @@ export function useAgConnect(workspace, ws) {
   }, [api]);
 
   const syncChat = useCallback(async () => {
+    setIsLoading(true);
     try {
       const msg = await fetchChat();
       if (msg && msg.items) {
@@ -77,6 +79,7 @@ export function useAgConnect(workspace, ws) {
         setHasRejectAll(!!msg.hasRejectAll);
       }
     } catch { }
+    setIsLoading(false);
   }, [fetchChat]);
 
   const fetchTargets = useCallback(async () => {
@@ -88,8 +91,11 @@ export function useAgConnect(workspace, ws) {
   }, [api]);
 
   const selectConversation = useCallback(async (title) => {
-    return api('POST', '/cdp/conversations/select', { title });
-  }, [api]);
+    setItems([]);
+    setIsLoading(true);
+    await api('POST', '/cdp/conversations/select', { title });
+    await syncChat();
+  }, [api, syncChat]);
 
   useEffect(() => {
     setItems([]);
@@ -141,7 +147,7 @@ export function useAgConnect(workspace, ws) {
 
   return {
     status, statusText, currentModel, setCurrentModel,
-    isBusy, items, hasAcceptAll, hasRejectAll,
+    isBusy, isLoading, items, hasAcceptAll, hasRejectAll,
     sendMessage, stopAgent,
     fetchModels, changeModel,
     clickAcceptAll, clickRejectAll,
