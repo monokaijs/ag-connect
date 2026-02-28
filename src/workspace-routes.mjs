@@ -718,14 +718,13 @@ function setupWorkspaceRoutes(app, broadcast) {
     let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'url required' });
 
-    const httpsMatch = url.match(/^https?:\/\/(github\.com|gitlab\.com)\/(.+?)(?:\.git)?$/);
-    if (httpsMatch) {
-      url = `git@${httpsMatch[1]}:${httpsMatch[2]}.git`;
-    }
-
     try {
       const sshKeys = await SshKey.find();
       if (sshKeys.length > 0) {
+        const httpsMatch = url.match(/^https?:\/\/(github\.com|gitlab\.com)\/(.+?)(?:\.git)?$/);
+        if (httpsMatch) {
+          url = `git@${httpsMatch[1]}:${httpsMatch[2]}.git`;
+        }
         await execInContainer(workspace.containerId, 'mkdir -p /home/aguser/.ssh && chmod 700 /home/aguser/.ssh');
         for (const key of sshKeys) {
           const safeName = key.name.replace(/[^a-zA-Z0-9_-]/g, '_');
