@@ -1,8 +1,11 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const net = require('net');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -52,9 +55,57 @@ function waitForCdp(port, timeoutSecs) {
   });
 }
 
+function detectIdePath() {
+  const platform = os.platform();
+  const candidates = [];
+
+  if (platform === 'darwin') {
+    candidates.push(
+      '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity',
+      '/Applications/Antigravity.app/Contents/MacOS/Antigravity',
+      path.join(os.homedir(), 'Applications/Antigravity.app/Contents/Resources/app/bin/antigravity'),
+    );
+  } else if (platform === 'win32') {
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    candidates.push(
+      path.join(programFiles, 'Antigravity', 'bin', 'antigravity.cmd'),
+      path.join(programFiles, 'Antigravity', 'antigravity.exe'),
+      path.join(localAppData, 'Programs', 'Antigravity', 'bin', 'antigravity.cmd'),
+      path.join(localAppData, 'Programs', 'Antigravity', 'antigravity.exe'),
+    );
+  } else {
+    candidates.push(
+      '/usr/bin/antigravity',
+      '/usr/local/bin/antigravity',
+      '/snap/bin/antigravity',
+      path.join(os.homedir(), '.local/bin/antigravity'),
+    );
+  }
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      console.log('Found Antigravity at: ' + p);
+      return p;
+    }
+  }
+
+  try {
+    const which = platform === 'win32' ? 'where antigravity' : 'which antigravity';
+    const result = execSync(which, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (result) {
+      console.log('Found Antigravity in PATH: ' + result.split('\n')[0]);
+      return result.split('\n')[0];
+    }
+  } catch { }
+
+  return null;
+}
+
 class IdeManager {
-  constructor(folder) {
+  constructor(folder, idePath) {
     this.folder = folder;
+    this.idePath = idePath || null;
     this.process = null;
     this.cdpPort = 0;
   }
@@ -63,9 +114,17 @@ class IdeManager {
     const port = await findFreePort();
     this.cdpPort = port;
 
-    console.log('Spawning Antigravity IDE (CDP port ' + port + ')...');
+    const bin = this.idePath || detectIdePath();
+    if (!bin) {
+      throw new Error(
+        'Antigravity IDE not found. Install it or specify the path with --ide-path.\n'
+        + '  Searched: ' + os.platform() + ' default paths and PATH'
+      );
+    }
 
-    this.process = spawn('antigravity', [
+    console.log('Spawning: ' + bin + ' (CDP port ' + port + ')');
+
+    this.process = spawn(bin, [
       '--remote-debugging-port=' + port,
       '--folder', this.folder,
     ], {

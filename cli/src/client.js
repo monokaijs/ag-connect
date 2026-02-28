@@ -5,14 +5,14 @@ const { IdeManager } = require('./ide-manager');
 const { CdpProxy } = require('./cdp-proxy');
 
 class AgConnectClient {
-  constructor({ serverUrl, token, folder, name, workspaceId }) {
+  constructor({ serverUrl, token, folder, name, workspaceId, idePath }) {
     this.serverUrl = serverUrl.replace(/\/+$/, '');
     this.token = token;
     this.folder = folder;
     this.name = name;
     this.ws = null;
     this.workspaceId = workspaceId || null;
-    this.ide = new IdeManager(folder);
+    this.ide = new IdeManager(folder, idePath);
     this.cdpProxy = null;
     this.reconnectTimer = null;
     this.running = true;

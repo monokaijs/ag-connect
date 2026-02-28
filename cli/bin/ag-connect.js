@@ -28,6 +28,7 @@ if (hasFlag('--help', '-h')) {
     -w, --workspace <id>     Connect to an existing workspace by ID
     -f, --folder <path>      Workspace folder path (default: current directory)
     -n, --name <name>        Workspace display name
+    -i, --ide-path <path>    Path to Antigravity IDE binary (auto-detected if omitted)
     -h, --help               Show this help
 
   Environment variables:
@@ -45,6 +46,7 @@ const token = getArg('--token', '-t') || process.env.AG_TOKEN;
 const workspaceId = getArg('--workspace', '-w') || process.env.AG_WORKSPACE;
 const folder = getArg('--folder', '-f') || process.cwd();
 const name = getArg('--name', '-n') || folder.split('/').pop() || 'CLI Workspace';
+const idePath = getArg('--ide-path', '-i') || process.env.AG_IDE_PATH;
 
 if (!serverUrl) {
   console.error('Error: --server <url> or AG_SERVER env var is required');
@@ -64,6 +66,7 @@ console.log(' Server:    ' + serverUrl);
 if (workspaceId) console.log(' Workspace: ' + workspaceId);
 console.log(' Folder:    ' + folder);
 console.log(' Name:      ' + name);
+if (idePath) console.log(' IDE Path:  ' + idePath);
 console.log('-'.repeat(50));
 console.log('');
 
@@ -73,6 +76,7 @@ const client = new AgConnectClient({
   folder,
   name,
   workspaceId,
+  idePath,
 });
 
 const shutdown = async () => {
