@@ -743,7 +743,8 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
 
-      const result = await execInContainer(workspace.containerId, `cd /workspace && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone ${JSON.stringify(url)} 2>&1`);
+      const cloneDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
+      const result = await execInContainer(workspace.containerId, `cd ${cloneDir} && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone ${JSON.stringify(url)} 2>&1`);
       res.json({ ok: true, output: result });
     } catch (err) {
       res.status(500).json({ error: err.message });
