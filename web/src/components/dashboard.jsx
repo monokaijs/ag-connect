@@ -359,6 +359,18 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
     }
   }, [allItems]);
 
+  useEffect(() => {
+    const onResize = () => {
+      const el = scrollRef.current;
+      if (!el) return;
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const chatContent = (
     <>
       <div className='min-h-0 flex-1 overflow-hidden'>
