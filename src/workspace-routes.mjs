@@ -342,7 +342,8 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
 
-      const result = await gpiSendMessage(workspace, cascadeId, text);
+      const model = workspace.gpi?.selectedModel || undefined;
+      const result = await gpiSendMessage(workspace, cascadeId, text, model);
       res.json({ ok: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -378,47 +379,31 @@ function setupWorkspaceRoutes(app, broadcast) {
               return ['Claude', 'Gemini', 'GPT', 'Opus', 'Sonnet', 'Flash', 'Haiku', 'o1', 'o3', 'o4'].some(p => t.includes(p)) && t.length < 50;
             });
             const allModels = optionSpans.map(s => s.textContent.trim()).filter((m, i, arr) => arr.indexOf(m) === i);
-            const current = btn ? btn.textContent.trim() : (allModels.length > 0 ? allModels[0] : '');
             if (container) document.body.click();
-            resolve({ ok: true, current, models: allModels.map(m => ({ label: m, selected: m === current })) });
+            resolve({ models: allModels });
           }, 300);
         });
       })()`, { target: 'workbench' });
-      res.json(result);
+      const scraped = result?.results?.[0]?.value || result;
+      const current = workspace.gpi?.selectedModel || '';
+      const models = (scraped?.models || []).map(m => ({
+        label: m,
+        selected: m === current,
+      }));
+      res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post('/api/workspaces/:id/cdp/models/select', async (req, res) => {
-    const workspace = await Workspace.findById(req.params.id);
-    if (!workspace) return res.status(404).json({ error: 'Not found' });
-    const escaped = JSON.stringify(req.body.model);
-    if (!req.body.model) return res.status(400).json({ ok: false, error: 'missing model' });
+    const { model } = req.body;
+    if (!model) return res.status(400).json({ ok: false, error: 'missing model' });
     try {
-      const result = await wsEval(workspace, `(() => {
-        const currentEl = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
-        const btn = currentEl ? currentEl.closest('button, div[class*="cursor-"]') : null;
-        if (btn) btn.click();
-        return new Promise(resolve => {
-          setTimeout(() => {
-            const optionSpans = Array.from(document.querySelectorAll('span, div')).filter(s => {
-              if (s.children.length > 0) return false;
-              const t = s.textContent.trim();
-              return ['Claude', 'Gemini', 'GPT', 'Opus', 'Sonnet', 'Flash', 'Haiku', 'o1', 'o3', 'o4'].some(p => t.includes(p)) && t.length < 50;
-            });
-            const target = optionSpans.find(s => s.textContent.trim().includes(${escaped}));
-            if (target) {
-              target.click();
-              resolve({ ok: true });
-            } else {
-              document.body.click();
-              resolve({ ok: false, error: 'model_not_found' });
-            }
-          }, 300);
-        });
-      })()`, { target: 'workbench' });
-      res.json(result);
+      await Workspace.findByIdAndUpdate(req.params.id, {
+        'gpi.selectedModel': model,
+      });
+      res.json({ ok: true, results: [{ value: { ok: true, selected: model } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
