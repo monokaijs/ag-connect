@@ -17,6 +17,11 @@
     "Keyboard": {
       "resize": "native",
       "resizeOnFullScreen": true
+    },
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "autoDeleteFailed": true,
+      "autoDeletePrevious": true
     }
   }
 }
