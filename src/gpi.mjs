@@ -445,18 +445,105 @@ export async function gpiCancelInvocation(workspace, cascadeId) {
 }
 
 export async function gpiGetModels(workspace) {
-  const body = {
-    metadata: {
-      ideName: 'antigravity',
-      locale: 'en',
-      ideVersion: '1.15.8',
-      extensionName: 'antigravity',
-    },
-  };
-  const result = await gpiEval(workspace, buildFetchExpr('GetCascadeModelConfigs', body));
-  if (!result?.ok || !result?.data) return { ok: false, error: result?.error || 'no_data' };
-  const configs = result.data.clientModelConfigs || result.data.client_model_configs || [];
-  const models = configs
+  const expr = `(async () => {
+    try {
+      const perf = performance.getEntriesByType('resource');
+      let lsUrl = null;
+      for (let i = perf.length - 1; i >= 0; i--) {
+        if (perf[i].name.includes('LanguageServerService')) {
+          const u = new URL(perf[i].name);
+          lsUrl = u.origin;
+          break;
+        }
+      }
+      if (!lsUrl) return { ok: false, error: 'ls_not_found' };
+
+      let csrf = window.__gpiCsrf;
+      if (!csrf) {
+        try {
+          const frames = document.querySelectorAll('iframe');
+          for (const f of frames) {
+            try {
+              const fc = f.contentWindow?.__gpiCsrf;
+              if (fc) { csrf = fc; break; }
+            } catch {}
+          }
+        } catch {}
+      }
+      if (!csrf) return { ok: false, error: 'no_csrf' };
+
+      let apiKey = '';
+      try {
+        const items = await caches.keys().then(async names => {
+          for (const name of names) {
+            const cache = await caches.open(name);
+            const keys = await cache.keys();
+            for (const key of keys) {
+              if (key.url.includes('api_key') || key.url.includes('apiKey')) {
+                return key.url;
+              }
+            }
+          }
+          return null;
+        });
+      } catch {}
+
+      try {
+        if (!apiKey) {
+          const perfEntries = performance.getEntriesByType('resource');
+          for (const entry of perfEntries) {
+            if (entry.name.includes('api_key=')) {
+              const match = entry.name.match(/api_key=([^&]+)/);
+              if (match) { apiKey = match[1]; break; }
+            }
+          }
+        }
+      } catch {}
+
+      const origFetch = window.__origFetch || window.fetch;
+      const res = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigs', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'connect-protocol-version': '1',
+          'x-codeium-csrf-token': csrf,
+        },
+        body: JSON.stringify({
+          metadata: {
+            ideName: 'antigravity',
+            locale: 'en',
+            ideVersion: '1.15.8',
+            extensionName: 'antigravity',
+            apiKey: apiKey || undefined,
+          },
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      return { ok: res.status === 200, status: res.status, data, keys: data ? Object.keys(data) : [] };
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  })()`;
+
+  const result = await gpiEval(workspace, expr);
+  console.log('[GPI] GetCascadeModelConfigs result:', JSON.stringify(result).substring(0, 800));
+  if (!result?.ok || !result?.data) return { ok: false, error: result?.error || 'no_data', raw: result };
+
+  const dataKeys = Object.keys(result.data);
+  console.log('[GPI] Model data keys:', dataKeys);
+
+  const configs = result.data.clientModelConfigs
+    || result.data.client_model_configs
+    || result.data.modelConfigs
+    || result.data.model_configs
+    || (dataKeys.length === 1 ? result.data[dataKeys[0]] : [])
+    || [];
+
+  const configArr = Array.isArray(configs) ? configs : [];
+  console.log('[GPI] Model configs found:', configArr.length);
+
+  const models = configArr
     .filter(c => !c.disabled)
     .map(c => ({
       label: c.label,

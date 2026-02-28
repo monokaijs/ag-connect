@@ -366,13 +366,25 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const result = await gpiGetModels(workspace);
-      if (result.ok) {
-        const current = workspace.gpi?.selectedModel || '';
-        res.json({ ok: true, results: [{ value: { ok: true, current, models: result.models } }] });
-      } else {
-        res.json(result);
-      }
+      const result = await wsEval(workspace, `(() => {
+        const btn = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
+        const container = btn ? btn.closest('button, div[class*="cursor-"]') : null;
+        if (container) container.click();
+        return new Promise(resolve => {
+          setTimeout(() => {
+            const optionSpans = Array.from(document.querySelectorAll('span, div')).filter(s => {
+              if (s.children.length > 0) return false;
+              const t = s.textContent.trim();
+              return ['Claude', 'Gemini', 'GPT', 'Opus', 'Sonnet', 'Flash', 'Haiku', 'o1', 'o3', 'o4'].some(p => t.includes(p)) && t.length < 50;
+            });
+            const allModels = optionSpans.map(s => s.textContent.trim()).filter((m, i, arr) => arr.indexOf(m) === i);
+            const current = btn ? btn.textContent.trim() : (allModels.length > 0 ? allModels[0] : '');
+            if (container) document.body.click();
+            resolve({ ok: true, current, models: allModels.map(m => ({ label: m, selected: m === current })) });
+          }, 300);
+        });
+      })()`, { target: 'workbench' });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -381,17 +393,32 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/cdp/models/select', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    const { model } = req.body;
-    if (!model) return res.status(400).json({ ok: false, error: 'missing model' });
+    const escaped = JSON.stringify(req.body.model);
+    if (!req.body.model) return res.status(400).json({ ok: false, error: 'missing model' });
     try {
-      const models = await gpiGetModels(workspace);
-      const found = models.models?.find(m => m.label === model);
-      if (!found) return res.json({ ok: false, error: 'model_not_found', available: models.models?.map(m => m.label) });
-      await Workspace.findByIdAndUpdate(workspace._id, {
-        'gpi.selectedModel': model,
-        'gpi.selectedModelAlias': found.modelOrAlias,
-      });
-      res.json({ ok: true, results: [{ value: { ok: true, selected: model } }] });
+      const result = await wsEval(workspace, `(() => {
+        const currentEl = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
+        const btn = currentEl ? currentEl.closest('button, div[class*="cursor-"]') : null;
+        if (btn) btn.click();
+        return new Promise(resolve => {
+          setTimeout(() => {
+            const optionSpans = Array.from(document.querySelectorAll('span, div')).filter(s => {
+              if (s.children.length > 0) return false;
+              const t = s.textContent.trim();
+              return ['Claude', 'Gemini', 'GPT', 'Opus', 'Sonnet', 'Flash', 'Haiku', 'o1', 'o3', 'o4'].some(p => t.includes(p)) && t.length < 50;
+            });
+            const target = optionSpans.find(s => s.textContent.trim().includes(${escaped}));
+            if (target) {
+              target.click();
+              resolve({ ok: true });
+            } else {
+              document.body.click();
+              resolve({ ok: false, error: 'model_not_found' });
+            }
+          }, 300);
+        });
+      })()`, { target: 'workbench' });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
