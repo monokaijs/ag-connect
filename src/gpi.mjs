@@ -157,7 +157,6 @@ function buildSendExpr(cascadeId, message, model) {
             artifactReviewMode: 'ARTIFACT_REVIEW_MODE_ALWAYS',
           },
         },
-        ...(model ? { requestedModel: { model } } : {}),
       },
     },
   };
@@ -181,10 +180,10 @@ function buildSendExpr(cascadeId, message, model) {
       const requestBody = ${JSON.stringify(JSON.stringify(body))};
       const parsed = JSON.parse(requestBody);
       const modelId = ${modelJson ? `${modelJson}` : 'null'} || window.__gpiModelUid;
-      if (modelId && !parsed.cascadeConfig?.plannerConfig?.requestedModel) {
+      if (modelId) {
         parsed.cascadeConfig = parsed.cascadeConfig || {};
-        parsed.cascadeConfig.plannerConfig = parsed.cascadeConfig.plannerConfig || {};
-        parsed.cascadeConfig.plannerConfig.requestedModel = { model: modelId };
+        if (!parsed.cascadeConfig.planModel) parsed.cascadeConfig.planModel = modelId;
+        if (!parsed.cascadeConfig.requestedModelUid) parsed.cascadeConfig.requestedModelUid = modelId;
       }
 
       const origFetch = window.__origFetch || window.fetch;
