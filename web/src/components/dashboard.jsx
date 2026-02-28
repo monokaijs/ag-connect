@@ -232,15 +232,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const scrollRef = useRef(null);
   const isAtBottomRef = useRef(true);
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (isAtBottomRef.current) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    }
-  }, [allItems]);
+
 
   const handleFileOpen = (fullPath) => {
     if (!fullPath) return;
@@ -361,6 +353,16 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
     if (optimisticItem) result.push(optimisticItem);
     return result;
   }, [items, optimisticItem]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (isAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+  }, [allItems]);
 
   const chatContent = (
     <>
