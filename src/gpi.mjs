@@ -1,4 +1,5 @@
 import { cdpEvalOnPort } from './workspace-cdp.mjs';
+import { cliCdpEval } from './cli-ws.mjs';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -375,10 +376,21 @@ function buildCancelExpr(cascadeId) {
   })()`;
 }
 
-async function gpiEval(workspace, expression) {
+async function evalForWorkspace(workspace, expression, opts = {}) {
+  if (workspace.type === 'cli') {
+    const result = await cliCdpEval(workspace._id.toString(), expression, opts);
+    return { ok: true, results: [{ value: result }] };
+  }
   const port = workspace.cdpPort || workspace.ports?.debug;
   if (!port) return { ok: false, error: 'no_debug_port' };
+  return cdpEvalOnPort(port, expression, {
+    target: opts.target || 'workbench',
+    host: workspace.cdpHost,
+    timeout: opts.timeout || 15000,
+  });
+}
 
+async function gpiEval(workspace, expression) {
   const pickBest = (results) => {
     if (!results?.length) return null;
     return results.find(r => r.value?.ok === true)?.value
@@ -387,9 +399,8 @@ async function gpiEval(workspace, expression) {
       || results[0]?.value;
   };
 
-  const result = await cdpEvalOnPort(port, expression, {
+  const result = await evalForWorkspace(workspace, expression, {
     target: 'workbench',
-    host: workspace.cdpHost,
     timeout: 15000,
   });
   if (!result.ok) return result;
@@ -414,12 +425,8 @@ async function gpiEval(workspace, expression) {
 }
 
 export async function gpiBootstrap(workspace) {
-  const port = workspace.cdpPort || workspace.ports?.debug;
-  if (!port) return { ok: false, error: 'no_debug_port' };
-
-  const result = await cdpEvalOnPort(port, buildBootstrapExpr(), {
+  const result = await evalForWorkspace(workspace, buildBootstrapExpr(), {
     target: 'workbench',
-    host: workspace.cdpHost,
     timeout: 20000,
   });
 
