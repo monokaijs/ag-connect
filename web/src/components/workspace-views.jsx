@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import {
   Loader2, AlertCircle, LogIn, Play, Terminal,
-  Plug, Package, Rocket, Hourglass, Lock, Syringe, RefreshCw, Settings, Zap, FolderOpen
+  Plug, Package, Rocket, Hourglass, Lock, Syringe, RefreshCw, Settings, Zap, FolderOpen, Copy, Check
 } from 'lucide-react';
 import { getApiBase } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
@@ -22,7 +22,72 @@ function StageIcon({ stage }) {
   return <Icon className="w-4 h-4 text-blue-400" />;
 }
 
+function CliWaitingView({ workspace }) {
+  const [copied, setCopied] = useState(false);
+  const serverUrl = window.location.origin;
+  const cmd = `npx ag-connect --server ${serverUrl}`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
+      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500/20 to-blue-500/20 border border-white/10 flex items-center justify-center">
+        <Terminal className="w-8 h-8 text-teal-400" />
+      </div>
+      <div className="text-center space-y-2">
+        <h2 className="text-lg font-medium text-white">Connect via CLI</h2>
+        <p className="text-sm text-zinc-400 max-w-sm">
+          Run the following command on your local machine to connect this workspace.
+        </p>
+      </div>
+      <div className="w-full max-w-md">
+        <div
+          onClick={handleCopy}
+          className="flex items-center gap-2 bg-zinc-900 border border-white/10 rounded-lg px-4 py-3 cursor-pointer hover:border-white/20 transition-colors group"
+        >
+          <code className="flex-1 text-sm text-teal-400 font-mono select-all">{cmd}</code>
+          <button className="shrink-0 text-zinc-500 group-hover:text-white transition-colors">
+            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+      <div className="w-full max-w-md space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="w-5 h-5 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
+            <span className="text-[10px] font-bold text-zinc-400">1</span>
+          </div>
+          <p className="text-xs text-zinc-400">Open a terminal on your local machine</p>
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="w-5 h-5 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
+            <span className="text-[10px] font-bold text-zinc-400">2</span>
+          </div>
+          <p className="text-xs text-zinc-400">Run the command above (requires Node.js 18+)</p>
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="w-5 h-5 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
+            <span className="text-[10px] font-bold text-zinc-400">3</span>
+          </div>
+          <p className="text-xs text-zinc-400">The CLI will launch Antigravity IDE and connect automatically</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        <span>Waiting for connection...</span>
+      </div>
+    </div>
+  );
+}
+
 function InitView({ workspace }) {
+  if (workspace.type === 'cli' || workspace.stage === 'Waiting for CLI client') {
+    return <CliWaitingView workspace={workspace} />;
+  }
+
   const logsRef = useRef(null);
   const logs = workspace.initLogs || [];
 
