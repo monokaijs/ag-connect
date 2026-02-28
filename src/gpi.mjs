@@ -282,7 +282,7 @@ function buildBootstrapExpr() {
 }
 
 function buildGetTrajectoryExpr(cascadeId) {
-  return buildFetchExpr('GetCascadeTrajectory', { cascadeId });
+  return buildFetchExpr('GetCascadeTrajectory', { cascadeId, numSteps: 10000 });
 }
 
 function buildGetAllTrajectoriesExpr() {
@@ -911,28 +911,28 @@ function parseTrajectoryItems(trajectory) {
 
   const grouped = [];
   let currentTask = null;
+  let taskBroken = false;
   for (const item of items) {
     if (item.type === 'progress') {
-      let block = grouped.find(g => g.type === 'task_block' && g.title === item.title);
-      if (!block) {
-        block = {
+      if (currentTask && !taskBroken && currentTask.title === item.title) {
+        currentTask.summary = item.summary;
+        currentTask.mode = item.mode;
+        if (item.status) currentTask.steps.push(item);
+      } else {
+        const block = {
           type: 'task_block',
           title: item.title,
           summary: item.summary,
           mode: item.mode,
-          steps: [],
+          steps: item.status ? [item] : [],
           files: [],
         };
         grouped.push(block);
+        currentTask = block;
+        taskBroken = false;
       }
-      block.summary = item.summary;
-      block.mode = item.mode;
-      if (item.status) {
-        block.steps.push(item);
-      }
-      currentTask = block;
     } else if (item.type === 'file_action') {
-      if (currentTask) {
+      if (currentTask && !taskBroken) {
         if (!currentTask.files.find(f => f.fullPath === item.fullPath && f.action === item.action)) {
           currentTask.files.push(item);
         }
@@ -940,7 +940,7 @@ function parseTrajectoryItems(trajectory) {
         grouped.push(item);
       }
     } else {
-      currentTask = null; // Important: Clear the current task when we see a non-file, non-progress item so future files don't attach to it!
+      taskBroken = true;
       grouped.push(item);
     }
   }
