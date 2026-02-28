@@ -5,13 +5,13 @@ const { IdeManager } = require('./ide-manager');
 const { CdpProxy } = require('./cdp-proxy');
 
 class AgConnectClient {
-  constructor({ serverUrl, token, folder, name }) {
+  constructor({ serverUrl, token, folder, name, workspaceId }) {
     this.serverUrl = serverUrl.replace(/\/+$/, '');
     this.token = token;
     this.folder = folder;
     this.name = name;
     this.ws = null;
-    this.workspaceId = null;
+    this.workspaceId = workspaceId || null;
     this.ide = new IdeManager(folder);
     this.cdpProxy = null;
     this.reconnectTimer = null;
@@ -19,11 +19,14 @@ class AgConnectClient {
   }
 
   async connect() {
-    // 1. Register workspace on the server
-    console.log('Registering workspace on server...');
-    const workspace = await this._registerWorkspace();
-    this.workspaceId = workspace._id;
-    console.log('Workspace registered: ' + this.workspaceId);
+    if (this.workspaceId) {
+      console.log('Connecting to existing workspace: ' + this.workspaceId);
+    } else {
+      console.log('Registering workspace on server...');
+      const workspace = await this._registerWorkspace();
+      this.workspaceId = workspace._id;
+      console.log('Workspace registered: ' + this.workspaceId);
+    }
 
     // 2. Start Antigravity IDE locally
     console.log('Starting Antigravity IDE...');

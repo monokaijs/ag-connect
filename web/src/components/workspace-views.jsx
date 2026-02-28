@@ -25,7 +25,7 @@ function StageIcon({ stage }) {
 function CliWaitingView({ workspace }) {
   const [copied, setCopied] = useState(false);
   const serverUrl = window.location.origin;
-  const cmd = `npx ag-connect --server ${serverUrl}`;
+  const cmd = `npx ag-connect -s ${serverUrl} -w ${workspace._id} -t <token>`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(cmd);
@@ -47,9 +47,11 @@ function CliWaitingView({ workspace }) {
       <div className="w-full max-w-md">
         <div
           onClick={handleCopy}
-          className="flex items-center gap-2 bg-zinc-900 border border-white/10 rounded-lg px-4 py-3 cursor-pointer hover:border-white/20 transition-colors group"
+          className="flex items-center gap-2 bg-zinc-900 border border-white/10 rounded-lg px-4 py-3 cursor-pointer hover:border-teal-500/30 transition-colors group"
         >
-          <code className="flex-1 text-sm text-teal-400 font-mono select-all">{cmd}</code>
+          <div className="flex-1 overflow-x-auto no-scrollbar">
+            <code className="text-xs text-teal-400 font-mono whitespace-nowrap">{cmd}</code>
+          </div>
           <button className="shrink-0 text-zinc-500 group-hover:text-white transition-colors">
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
           </button>

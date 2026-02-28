@@ -20,13 +20,15 @@ if (hasFlag('--help', '-h')) {
 
   Usage:
     npx ag-connect --server <url> --token <jwt> [--folder <path>] [--name <name>]
+    npx ag-connect --server <url> --token <jwt> --workspace <id>
 
   Options:
-    -s, --server <url>    AG Connect server URL (e.g. https://ag.example.com)
-    -t, --token <jwt>     Authentication token from the AG Connect web UI
-    -f, --folder <path>   Workspace folder path (default: current directory)
-    -n, --name <name>     Workspace display name
-    -h, --help            Show this help
+    -s, --server <url>       AG Connect server URL (e.g. https://ag.example.com)
+    -t, --token <jwt>        Authentication token from the AG Connect web UI
+    -w, --workspace <id>     Connect to an existing workspace by ID
+    -f, --folder <path>      Workspace folder path (default: current directory)
+    -n, --name <name>        Workspace display name
+    -h, --help               Show this help
 
   Environment variables:
     AG_SERVER             Server URL (alternative to --server)
@@ -40,6 +42,7 @@ if (hasFlag('--help', '-h')) {
 
 const serverUrl = getArg('--server', '-s') || process.env.AG_SERVER;
 const token = getArg('--token', '-t') || process.env.AG_TOKEN;
+const workspaceId = getArg('--workspace', '-w') || process.env.AG_WORKSPACE;
 const folder = getArg('--folder', '-f') || process.cwd();
 const name = getArg('--name', '-n') || folder.split('/').pop() || 'CLI Workspace';
 
@@ -58,6 +61,7 @@ console.log('='.repeat(50));
 console.log(' AG Connect CLI');
 console.log('='.repeat(50));
 console.log(' Server:    ' + serverUrl);
+if (workspaceId) console.log(' Workspace: ' + workspaceId);
 console.log(' Folder:    ' + folder);
 console.log(' Name:      ' + name);
 console.log('-'.repeat(50));
@@ -68,6 +72,7 @@ const client = new AgConnectClient({
   token,
   folder,
   name,
+  workspaceId,
 });
 
 const shutdown = async () => {
