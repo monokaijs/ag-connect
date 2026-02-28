@@ -1,4 +1,4 @@
-import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, ChevronDown, Download, Trash2, Pencil, PanelLeft, Menu, ZoomIn, ZoomOut, RotateCcw, Keyboard, Maximize } from 'lucide-react';
+import { Play, Square, RotateCw, LogOut, Loader2, User, History, Plus, Circle, Wifi, WifiOff, MonitorPlay, MessageSquare, Folder, FolderOpen, Gauge, TerminalSquare, ChevronDown, Download, Trash2, Pencil, PanelLeft, Menu, ZoomIn, ZoomOut, RotateCcw, Keyboard, Maximize, Check, AlertCircle } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { FolderPickerDialog } from './folder-picker';
 import { useConfirm } from './confirm-dialog';
@@ -86,6 +86,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloning, setCloning] = useState(false);
   const [cloneError, setCloneError] = useState('');
+  const [cloneSuccess, setCloneSuccess] = useState('');
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const submittedRef = useRef(false);
@@ -96,6 +97,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
     if (!cloneUrl.trim() || cloning) return;
     setCloning(true);
     setCloneError('');
+    setCloneSuccess('');
     try {
       const res = await fetch(`${getApiBase()}/api/workspaces/${workspace._id}/git/clone`, {
         method: 'POST',
@@ -103,11 +105,15 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
         body: JSON.stringify({ url: cloneUrl.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || !data.ok) {
         setCloneError(data.error || 'Clone failed');
       } else {
-        setShowClone(false);
-        setCloneUrl('');
+        setCloneSuccess(data.repoName || 'Repository');
+        setTimeout(() => {
+          setShowClone(false);
+          setCloneUrl('');
+          setCloneSuccess('');
+        }, 2000);
       }
     } catch (e) {
       setCloneError(e.message || 'Clone failed');
@@ -451,35 +457,60 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
         }}
       />
       {showClone && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { setShowClone(false); setCloneError(''); }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { if (!cloning) { setShowClone(false); setCloneError(''); setCloneSuccess(''); } }}>
           <div className="bg-zinc-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-medium text-white mb-1">Clone Git Repository</h3>
-            <p className="text-[11px] text-zinc-500 mb-4">Enter the repository URL. GitHub HTTPS URLs will be auto-converted to SSH.</p>
-            <input
-              autoFocus
-              value={cloneUrl}
-              onChange={(e) => setCloneUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleClone(); }}
-              placeholder="https://github.com/user/repo or git@github.com:user/repo.git"
-              className="w-full h-9 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono mb-3"
-            />
-            {cloneError && <p className="text-[11px] text-red-400 mb-3">{cloneError}</p>}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => { setShowClone(false); setCloneError(''); }}
-                className="h-8 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleClone}
-                disabled={!cloneUrl.trim() || cloning}
-                className="h-8 px-4 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
-              >
-                {cloning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                Clone
-              </button>
-            </div>
+            {cloneSuccess ? (
+              <div className="flex flex-col items-center py-4">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+                  <Check className="w-5 h-5 text-emerald-400" />
+                </div>
+                <p className="text-sm font-medium text-white mb-1">Cloned successfully</p>
+                <p className="text-[11px] text-zinc-400 font-mono">{cloneSuccess}</p>
+              </div>
+            ) : cloning ? (
+              <div className="flex flex-col items-center py-6">
+                <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mb-3" />
+                <p className="text-sm font-medium text-white mb-1">Cloning repository...</p>
+                <p className="text-[11px] text-zinc-500">This may take a moment</p>
+              </div>
+            ) : (
+              <>
+                <h3 className="text-sm font-medium text-white mb-1">Clone Git Repository</h3>
+                <p className="text-[11px] text-zinc-500 mb-4">Enter the repository URL (HTTPS or SSH).</p>
+                <input
+                  autoFocus
+                  value={cloneUrl}
+                  onChange={(e) => setCloneUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleClone(); }}
+                  placeholder="https://github.com/user/repo"
+                  className="w-full h-9 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono mb-3"
+                />
+                {cloneError && (
+                  <div className="mb-3 p-2.5 rounded-lg bg-red-500/5 border border-red-500/10">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                      <pre className="text-[11px] text-red-400 whitespace-pre-wrap break-all font-mono leading-relaxed">{cloneError}</pre>
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => { setShowClone(false); setCloneError(''); }}
+                    className="h-8 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleClone}
+                    disabled={!cloneUrl.trim()}
+                    className="h-8 px-4 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Download className="w-3 h-3" />
+                    Clone
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

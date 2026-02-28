@@ -295,9 +295,21 @@ async function execInContainer(containerId, cmd) {
   });
   const stream = await exec.start({ hijack: true, stdin: false });
   return new Promise((resolve, reject) => {
-    let output = '';
-    stream.on('data', (chunk) => { output += chunk.toString(); });
-    stream.on('end', () => resolve(output));
+    const chunks = [];
+    stream.on('data', (chunk) => { chunks.push(chunk); });
+    stream.on('end', async () => {
+      const raw = Buffer.concat(chunks);
+      let text = '';
+      let offset = 0;
+      while (offset + 8 <= raw.length) {
+        const size = raw.readUInt32BE(offset + 4);
+        if (offset + 8 + size > raw.length) break;
+        text += raw.slice(offset + 8, offset + 8 + size).toString('utf8');
+        offset += 8 + size;
+      }
+      if (!text && raw.length > 0) text = raw.toString('utf8');
+      resolve(text);
+    });
     stream.on('error', reject);
   });
 }

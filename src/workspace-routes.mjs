@@ -743,8 +743,14 @@ function setupWorkspaceRoutes(app, broadcast) {
       }
 
       const cloneDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
-      const result = await execInContainer(workspace.containerId, `cd ${cloneDir} && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone ${JSON.stringify(url)} 2>&1`);
-      res.json({ ok: true, output: result });
+      const result = await execInContainer(workspace.containerId, `cd ${cloneDir} && GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} 2>&1`);
+      const hasError = result.includes('fatal:') || result.includes('error:') || result.includes('Permission denied');
+      if (hasError) {
+        res.json({ ok: false, error: result.trim() });
+      } else {
+        const repoName = url.replace(/\.git$/, '').split('/').pop();
+        res.json({ ok: true, output: result.trim(), repoName });
+      }
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
