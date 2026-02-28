@@ -744,7 +744,9 @@ function setupWorkspaceRoutes(app, broadcast) {
 
       const wsDir = workspace.mountedPath ? '/workspace' : '/home/aguser';
       const cmd = [
-        `GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} /tmp/_clone_tmp 2>&1`,
+        `rm -rf /tmp/_clone_tmp`,
+        `&& GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git clone --progress ${JSON.stringify(url)} /tmp/_clone_tmp 2>&1`,
+        `&& find ${wsDir} -mindepth 1 -maxdepth 1 ! -name '.config' -exec rm -rf {} +`,
         `&& shopt -s dotglob`,
         `&& mv /tmp/_clone_tmp/* ${wsDir}/`,
         `&& rm -rf /tmp/_clone_tmp`,
