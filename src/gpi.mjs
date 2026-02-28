@@ -444,6 +444,32 @@ export async function gpiCancelInvocation(workspace, cascadeId) {
   return gpiEval(workspace, buildCancelExpr(cascadeId));
 }
 
+export async function gpiGetModels(workspace) {
+  const body = {
+    metadata: {
+      ideName: 'antigravity',
+      locale: 'en',
+      ideVersion: '1.15.8',
+      extensionName: 'antigravity',
+    },
+  };
+  const result = await gpiEval(workspace, buildFetchExpr('GetCascadeModelConfigs', body));
+  if (!result?.ok || !result?.data) return { ok: false, error: result?.error || 'no_data' };
+  const configs = result.data.clientModelConfigs || result.data.client_model_configs || [];
+  const models = configs
+    .filter(c => !c.disabled)
+    .map(c => ({
+      label: c.label,
+      modelOrAlias: c.modelOrAlias || c.model_or_alias,
+      modelUid: c.modelUid || c.model_uid || '',
+      isPremium: !!c.isPremium || !!c.is_premium,
+      isBeta: !!c.isBeta || !!c.is_beta,
+      isNew: !!c.isNew || !!c.is_new,
+      supportsImages: !!c.supportsImages || !!c.supports_images,
+    }));
+  return { ok: true, models };
+}
+
 function parseTrajectoryItems(trajectory) {
   const items = [];
   const steps = trajectory?.steps || [];
@@ -624,6 +650,14 @@ function parseTrajectoryItems(trajectory) {
         items.push({ type: 'file_action', action: 'Searched', file: `"${query}" in ${dir}` });
         break;
       }
+      case 'CORTEX_STEP_TYPE_GREP_SEARCH_V2': {
+        const gs = step.grepSearchV2 || step.grep_search_v2 || {};
+        const pattern = gs.pattern || '';
+        const searchPath = (gs.searchPathUri || gs.search_path_uri || '').replace('file://', '');
+        const dir = searchPath.split('/').pop() || '';
+        items.push({ type: 'file_action', action: 'Searched', file: `"${pattern}" in ${dir}` });
+        break;
+      }
       case 'CORTEX_STEP_TYPE_VIEW_FILE_OUTLINE': {
         const vfo = step.viewFileOutline || {};
         const uri = vfo.absolutePathUri || '';
@@ -631,6 +665,94 @@ function parseTrajectoryItems(trajectory) {
         const basename = file.split('/').pop() || 'file';
         const ext = (basename.split('.').pop() || '').toUpperCase();
         items.push({ type: 'file_action', action: 'Analyzed', file: basename, fullPath: file || undefined, ext });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_VIEW_CODE_ITEM': {
+        const vci = step.viewCodeItem || step.view_code_item || {};
+        const uri = vci.absolutePathUri || vci.absolute_path_uri || '';
+        const file = uri.replace('file://', '');
+        const basename = file.split('/').pop() || 'file';
+        const ext = (basename.split('.').pop() || '').toUpperCase();
+        const nodeName = vci.nodePath || vci.node_path || '';
+        items.push({ type: 'file_action', action: 'Analyzed', file: nodeName ? `${nodeName} in ${basename}` : basename, fullPath: file || undefined, ext });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_WRITE_TO_FILE': {
+        const wf = step.writeToFile || step.write_to_file || {};
+        const uri = wf.absolutePathUri || wf.absolute_path_uri || wf.filePath || '';
+        const file = uri.replace('file://', '');
+        const basename = file.split('/').pop() || 'file';
+        const ext = (basename.split('.').pop() || '').toUpperCase();
+        items.push({ type: 'file_action', action: 'Created', file: basename, fullPath: file || undefined, ext });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_ERROR_MESSAGE': {
+        const em = step.errorMessage || step.error_message || {};
+        const err = em.error || step.error || {};
+        const text = err.userErrorMessage || err.user_error_message || err.shortError || err.short_error || err.fullError || err.full_error || 'An error occurred';
+        items.push({ type: 'error', text: text.substring(0, 1000) });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_MCP_TOOL': {
+        const mcp = step.mcpTool || step.mcp_tool || {};
+        const name = mcp.toolName || mcp.tool_name || mcp.serverName || mcp.server_name || 'MCP Tool';
+        items.push({ type: 'tool', text: `MCP: ${name}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_MEMORY': {
+        const mem = step.memory || {};
+        const content = mem.content || mem.text || '';
+        if (content) items.push({ type: 'tool', text: `Memory: ${content.substring(0, 200)}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_READ_URL_CONTENT': {
+        const ruc = step.readUrlContent || step.read_url_content || {};
+        const url = ruc.url || '';
+        items.push({ type: 'tool', text: `Read URL: ${url.substring(0, 200)}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_SEARCH_WEB': {
+        const sw = step.searchWeb || step.search_web || {};
+        const query = sw.query || '';
+        items.push({ type: 'tool', text: `Web search: ${query.substring(0, 200)}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_GIT_COMMIT': {
+        const gc = step.gitCommit || step.git_commit || {};
+        const message = gc.commitMessage || gc.commit_message || gc.message || '';
+        items.push({ type: 'tool', text: `Git commit: ${message.substring(0, 200)}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_READ_TERMINAL': {
+        const rt = step.readTerminal || step.read_terminal || {};
+        const name = rt.name || rt.processId || rt.process_id || 'terminal';
+        items.push({ type: 'tool', text: `Read terminal: ${name}` });
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_TODO_LIST': {
+        const tl = step.todoList || step.todo_list || {};
+        const todos = tl.todos || [];
+        if (todos.length) {
+          const summary = todos.map(t => `${t.status === 'CORTEX_TODO_LIST_ITEM_STATUS_COMPLETED' ? '✓' : '○'} ${t.content || ''}`).join('\n');
+          items.push({ type: 'tool', text: summary.substring(0, 500) });
+        }
+        break;
+      }
+      case 'CORTEX_STEP_TYPE_FINISH':
+      case 'CORTEX_STEP_TYPE_DUMMY':
+      case 'CORTEX_STEP_TYPE_INFORM':
+      case 'CORTEX_STEP_TYPE_CHECKPOINT':
+      case 'CORTEX_STEP_TYPE_SUGGESTED_RESPONSES':
+      case 'CORTEX_STEP_TYPE_BLOCKING':
+        break;
+      default: {
+        if (step.error) {
+          const err = step.error;
+          const text = err.userErrorMessage || err.user_error_message || err.shortError || err.short_error || err.fullError || err.full_error || '';
+          if (text) {
+            items.push({ type: 'error', text: text.substring(0, 1000) });
+          }
+        }
         break;
       }
     }
