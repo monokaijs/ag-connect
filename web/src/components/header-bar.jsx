@@ -113,6 +113,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
           setShowClone(false);
           setCloneUrl('');
           setCloneSuccess('');
+          if (onRestart) onRestart();
         }, 2000);
       }
     } catch (e) {
