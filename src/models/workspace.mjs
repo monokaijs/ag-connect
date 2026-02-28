@@ -33,6 +33,7 @@ const workspaceSchema = new mongoose.Schema({
     selectedModel: { type: String, default: '' },
     selectedModelUid: { type: String, default: '' },
   },
+  conversation: { type: mongoose.Schema.Types.Mixed, default: null },
   icon: { type: Number, default: -1 },
   color: { type: Number, default: 0 },
   initLogs: [String],

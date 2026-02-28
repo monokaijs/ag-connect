@@ -8,12 +8,7 @@ import {
 import { sendPushNotification } from './push.mjs';
 
 const activeMonitors = new Map();
-const lastState = new Map();
-const lastData = new Map();
-
-export function getChatState(wsId) {
-  return lastData.get(wsId) || { items: [] };
-}
+const lastHash = new Map();
 
 class WorkspaceMonitor {
   constructor(workspace, broadcast) {
@@ -51,7 +46,6 @@ class WorkspaceMonitor {
         this.bootstrapped = true;
         console.log(`[GPI] Bootstrap for ${this.wsId}: csrf=${!!result.csrf}`);
         if (result.modelUid) {
-          const { Workspace } = await import('./models/workspace.mjs');
           await Workspace.findByIdAndUpdate(this.wsId, { 'gpi.selectedModelUid': result.modelUid });
           console.log(`[GPI] Captured modelUid for ${this.wsId}: ${result.modelUid.substring(0, 20)}`);
         }
@@ -72,9 +66,6 @@ class WorkspaceMonitor {
     this._pollCount++;
     if (this._pollCount % 10 === 1) {
       console.log(`[Monitor] Poll #${this._pollCount} for ${this.wsId}, isBusy=${this.isBusy}`);
-    }
-    if (this._pollCount === 1) {
-      console.log(`[Monitor] DEBUG: First poll, will dump raw data`);
     }
 
     try {
@@ -144,28 +135,31 @@ class WorkspaceMonitor {
 
       const data = trajectoryToConversation(result.data);
 
-      const key = JSON.stringify({
-        items: data.items,
-        a: data.hasAcceptAll,
-        r: data.hasRejectAll,
-        b: data.isBusy,
-        t: data.statusText,
-      });
-      const prev = lastState.get(this.wsId);
+      const hash = `${data.turnCount}:${data.isBusy}:${data.hasAcceptAll}:${data.hasRejectAll}:${data.statusText}:${data.items.length}`;
+      const prev = lastHash.get(this.wsId);
 
-      if (!prev || prev !== key) {
-        lastState.set(this.wsId, key);
+      if (!prev || prev !== hash) {
+        lastHash.set(this.wsId, hash);
+
         const payload = {
-          id: this.wsId,
           items: data.items,
           statusText: data.statusText,
           isBusy: data.isBusy,
           turnCount: data.turnCount,
           hasAcceptAll: data.hasAcceptAll,
           hasRejectAll: data.hasRejectAll,
+          updatedAt: new Date(),
         };
-        lastData.set(this.wsId, payload);
-        this.broadcast({ event: 'conversation:update', payload });
+
+        await Workspace.findByIdAndUpdate(this.wsId, {
+          conversation: payload,
+          'gpi.activeCascadeId': cascadeId,
+        });
+
+        this.broadcast({
+          event: 'conversation:update',
+          payload: { id: this.wsId, ...payload },
+        });
       }
     } catch (err) {
       console.error(`[Monitor] Poll error [${this.wsId}]:`, err.message);

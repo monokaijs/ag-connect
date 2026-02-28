@@ -10,7 +10,7 @@ import {
   execInContainer,
 } from './docker-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
-import { getChatState } from './conversation-monitor.mjs';
+
 import { fetchWorkspaceQuota } from './quota.mjs';
 import { SshKey } from './models/ssh-key.mjs';
 import {
@@ -22,7 +22,6 @@ import {
   gpiCancelInvocation,
   gpiGetModels,
   gpiDiscoverModelUid,
-  trajectoryToConversation,
 } from './gpi.mjs';
 
 const HOST_BASE = process.env.HOST_BASE_PATH || '';
@@ -244,7 +243,9 @@ function setupWorkspaceRoutes(app, broadcast) {
 
   app.get('/api/workspaces/:id/cdp/chat', async (req, res) => {
     try {
-      res.json(getChatState(req.params.id));
+      const workspace = await Workspace.findById(req.params.id).lean();
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      res.json(workspace.conversation || { items: [], turnCount: 0, statusText: '' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -572,17 +573,10 @@ function setupWorkspaceRoutes(app, broadcast) {
   });
 
   app.get('/api/workspaces/:id/cdp/conversation', async (req, res) => {
-    const workspace = await Workspace.findById(req.params.id);
-    if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
-      const cascadeId = workspace.gpi?.activeCascadeId;
-      if (!cascadeId) return res.json({ turnCount: 0, items: [], statusText: '' });
-
-      const result = await gpiGetTrajectory(workspace, cascadeId);
-      if (!result.ok) return res.json({ turnCount: 0, items: [], statusText: '' });
-
-      const data = trajectoryToConversation(result.data);
-      res.json(data);
+      const workspace = await Workspace.findById(req.params.id).lean();
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      res.json(workspace.conversation || { items: [], turnCount: 0, statusText: '' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
