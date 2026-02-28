@@ -342,8 +342,27 @@ function setupWorkspaceRoutes(app, broadcast) {
         }
       }
 
-      const model = workspace.gpi?.selectedModel || undefined;
-      const result = await gpiSendMessage(workspace, cascadeId, text, model);
+      let modelUid = workspace.gpi?.selectedModelUid || undefined;
+      const modelLabel = workspace.gpi?.selectedModel || '';
+
+      // If we have a label but no UID, resolve it dynamically
+      if (!modelUid && modelLabel) {
+        try {
+          const modelsResult = await gpiGetModels(workspace);
+          if (modelsResult.ok && modelsResult.models?.length) {
+            const match = modelsResult.models.find(m => m.label === modelLabel);
+            if (match?.modelUid) {
+              modelUid = match.modelUid;
+              // Cache it for next time
+              await Workspace.findByIdAndUpdate(workspace._id, {
+                'gpi.selectedModelUid': modelUid,
+              });
+            }
+          }
+        } catch { }
+      }
+
+      const result = await gpiSendMessage(workspace, cascadeId, text, modelUid);
       res.json({ ok: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -367,6 +386,23 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
+      const gpiResult = await gpiGetModels(workspace);
+      const current = workspace.gpi?.selectedModel || '';
+
+      if (gpiResult.ok && gpiResult.models?.length) {
+        const models = gpiResult.models.map(m => ({
+          label: m.label,
+          modelUid: m.modelUid || '',
+          selected: m.label === current,
+          isPremium: m.isPremium,
+          isBeta: m.isBeta,
+          isNew: m.isNew,
+          supportsImages: m.supportsImages,
+        }));
+        return res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
+      }
+
+      // Fallback: DOM scraping if gRPC fails
       const result = await wsEval(workspace, `(() => {
         const btn = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
         const container = btn ? btn.closest('button, div[class*="cursor-"]') : null;
@@ -385,9 +421,9 @@ function setupWorkspaceRoutes(app, broadcast) {
         });
       })()`, { target: 'workbench' });
       const scraped = result?.results?.[0]?.value || result;
-      const current = workspace.gpi?.selectedModel || '';
       const models = (scraped?.models || []).map(m => ({
         label: m,
+        modelUid: '',
         selected: m === current,
       }));
       res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
@@ -397,13 +433,13 @@ function setupWorkspaceRoutes(app, broadcast) {
   });
 
   app.post('/api/workspaces/:id/cdp/models/select', async (req, res) => {
-    const { model } = req.body;
+    const { model, modelUid } = req.body;
     if (!model) return res.status(400).json({ ok: false, error: 'missing model' });
     try {
-      await Workspace.findByIdAndUpdate(req.params.id, {
-        'gpi.selectedModel': model,
-      });
-      res.json({ ok: true, results: [{ value: { ok: true, selected: model } }] });
+      const update = { 'gpi.selectedModel': model };
+      if (modelUid) update['gpi.selectedModelUid'] = modelUid;
+      await Workspace.findByIdAndUpdate(req.params.id, update);
+      res.json({ ok: true, results: [{ value: { ok: true, selected: model, modelUid: modelUid || '' } }] });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

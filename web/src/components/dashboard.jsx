@@ -214,7 +214,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
 }
 
 export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit }) {
-  const { status, statusText, currentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
+  const { status, statusText, currentModel, setCurrentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [optimisticItem, setOptimisticItem] = useState(null);
@@ -338,11 +338,11 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
     setModelsLoading(false);
   };
 
-  const handleSelectModel = async (label) => {
+  const handleSelectModel = async (modelObj) => {
     setModelsOpen(false);
-    setCurrentModel(label);
+    setCurrentModel(modelObj.label);
     try {
-      await changeModel(label);
+      await changeModel(modelObj.label, modelObj.modelUid);
     } catch { }
   };
 
@@ -490,7 +490,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
                       return (
                         <button
                           key={i}
-                          onMouseDown={() => handleSelectModel(m.label)}
+                          onMouseDown={() => handleSelectModel(m)}
                           className='flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent'
                         >
                           <Check className={`h-3.5 w-3.5 shrink-0 ${m.selected ? 'opacity-100' : 'opacity-0'}`} />

@@ -125,7 +125,7 @@ function buildFetchExpr(endpoint, body) {
   })()`;
 }
 
-function buildSendExpr(cascadeId, message, model = 'MODEL_PLACEHOLDER_M12') {
+function buildSendExpr(cascadeId, message, model) {
   const body = {
     cascadeId,
     items: [{ text: message }],
@@ -156,7 +156,7 @@ function buildSendExpr(cascadeId, message, model = 'MODEL_PLACEHOLDER_M12') {
             artifactReviewMode: 'ARTIFACT_REVIEW_MODE_ALWAYS',
           },
         },
-        requestedModel: { model },
+        ...(model ? { requestedModelUid: model } : {}),
       },
     },
   };
@@ -545,15 +545,22 @@ export async function gpiGetModels(workspace) {
 
   const models = configArr
     .filter(c => !c.disabled)
-    .map(c => ({
-      label: c.label,
-      modelOrAlias: c.modelOrAlias || c.model_or_alias,
-      modelUid: c.modelUid || c.model_uid || '',
-      isPremium: !!c.isPremium || !!c.is_premium,
-      isBeta: !!c.isBeta || !!c.is_beta,
-      isNew: !!c.isNew || !!c.is_new,
-      supportsImages: !!c.supportsImages || !!c.supports_images,
-    }));
+    .map(c => {
+      const moa = c.modelOrAlias || c.model_or_alias || {};
+      return {
+        label: c.label,
+        modelOrAlias: moa,
+        modelUid: c.modelUid || c.model_uid || moa.modelUid || moa.model_uid || '',
+        isPremium: !!c.isPremium || !!c.is_premium,
+        isBeta: !!c.isBeta || !!c.is_beta,
+        isNew: !!c.isNew || !!c.is_new,
+        supportsImages: !!c.supportsImages || !!c.supports_images,
+      };
+    });
+  if (models.length > 0) {
+    console.log('[GPI] First model sample:', JSON.stringify({ label: models[0].label, modelUid: models[0].modelUid, moaKeys: Object.keys(models[0].modelOrAlias) }));
+    console.log('[GPI] Models with UIDs:', models.filter(m => m.modelUid).length, '/', models.length);
+  }
   return { ok: true, models };
 }
 

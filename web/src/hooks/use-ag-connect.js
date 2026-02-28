@@ -38,8 +38,8 @@ export function useAgConnect(workspace, ws) {
     return api('GET', '/cdp/models');
   }, [api]);
 
-  const changeModel = useCallback(async (model) => {
-    return api('POST', '/cdp/models/select', { model });
+  const changeModel = useCallback(async (model, modelUid) => {
+    return api('POST', '/cdp/models/select', { model, modelUid });
   }, [api]);
 
   const clickAcceptAll = useCallback(async () => {

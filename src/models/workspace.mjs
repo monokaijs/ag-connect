@@ -30,6 +30,8 @@ const workspaceSchema = new mongoose.Schema({
     lsPort: { type: Number, default: 0 },
     lsHost: { type: String, default: '' },
     activeCascadeId: { type: String, default: '' },
+    selectedModel: { type: String, default: '' },
+    selectedModelUid: { type: String, default: '' },
   },
   icon: { type: Number, default: -1 },
   color: { type: Number, default: 0 },
