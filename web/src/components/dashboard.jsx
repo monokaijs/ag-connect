@@ -6,7 +6,6 @@ import { WorkspaceHostPanel } from '@/components/host-panel';
 import GitPanel from '@/components/git-panel';
 import { FilePreviewDialog } from '@/components/file-preview-dialog';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { Virtuoso } from 'react-virtuoso';
 import {
   Zap,
   Send,
@@ -230,8 +229,18 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const [activeTab, setActiveTab] = useState('explorer');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
-  const virtuosoRef = useRef(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  const scrollRef = useRef(null);
+  const isAtBottomRef = useRef(true);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (isAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+  }, [allItems]);
 
   const handleFileOpen = (fullPath) => {
     if (!fullPath) return;
@@ -366,21 +375,24 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
             <p className='text-sm'>Send a message or sync the IDE conversation</p>
           </div>
         ) : (
-          <Virtuoso
-            ref={virtuosoRef}
-            data={allItems}
-            followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
-            alignToBottom
-            atBottomThreshold={150}
-            atBottomStateChange={setIsAtBottom}
-            increaseViewportBy={{ top: 400, bottom: 200 }}
-            initialTopMostItemIndex={allItems.length - 1}
-            itemContent={(index, item) => (
-              <div className='mx-auto max-w-3xl px-4'>
-                <ConversationItem item={item} workspaceId={workspace._id} onFileOpen={handleFileOpen} />
-              </div>
-            )}
-          />
+          <div
+            ref={scrollRef}
+            className='h-full overflow-y-auto'
+            onScroll={() => {
+              const el = scrollRef.current;
+              if (!el) return;
+              isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            }}
+          >
+            <div className='flex flex-col'>
+              {allItems.map((item, index) => (
+                <div key={index} className='mx-auto max-w-3xl w-full px-4'>
+                  <ConversationItem item={item} workspaceId={workspace._id} onFileOpen={handleFileOpen} />
+                </div>
+              ))}
+              <div className='h-3' />
+            </div>
+          </div>
         )}
       </div>
 
