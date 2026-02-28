@@ -1,10 +1,12 @@
 name: Release OTA Update
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     paths:
       - 'web/**'
+      - '.github/workflows/release-ota.yml'
 
 permissions:
   contents: write
