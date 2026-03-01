@@ -215,42 +215,52 @@ function buildBootstrapExpr() {
         }
       }
 
-      if (!window.__gpiCsrf) {
-        const origFetch = window.__origFetch || window.fetch;
-        window.__origFetch = origFetch;
-        window.fetch = function(...args) {
-          const req = args[0];
-          const opts = args[1] || {};
-          const url = typeof req === 'string' ? req : req?.url || '';
-          if (url.includes('LanguageServerService')) {
-            const h = opts.headers || {};
-            const c = h['x-codeium-csrf-token'];
-            if (c) window.__gpiCsrf = c;
-            if (url.includes('SendUserCascadeMessage') || url.includes('StartCascade')) {
-              if (opts.body) {
-                try {
-                  const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
-                  const uid = b?.cascadeConfig?.plannerConfig?.requestedModel?.model
-                    || b?.cascadeConfig?.plannerConfig?.requestedModelUid
-                    || b?.cascadeConfig?.requestedModelUid;
-                  if (uid) window.__gpiModelUid = uid;
-                } catch {}
-              }
+      const origFetch = window.__origFetch || window.fetch;
+      window.__origFetch = origFetch;
+      window.fetch = function(...args) {
+        const req = args[0];
+        const opts = args[1] || {};
+        const url = typeof req === 'string' ? req : req?.url || '';
+        if (url.includes('LanguageServerService')) {
+          const h = opts.headers || {};
+          const c = h['x-codeium-csrf-token'];
+          if (c) window.__gpiCsrf = c;
+          if (url.includes('SendUserCascadeMessage') || url.includes('StartCascade')) {
+            if (opts.body) {
+              try {
+                const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+                const uid = b?.cascadeConfig?.plannerConfig?.requestedModel?.model
+                  || b?.cascadeConfig?.plannerConfig?.requestedModelUid
+                  || b?.cascadeConfig?.requestedModelUid;
+                if (uid) window.__gpiModelUid = uid;
+              } catch {}
             }
           }
-          return origFetch.apply(this, args);
-        };
-
-        const origXHR = window.XMLHttpRequest.prototype.setRequestHeader;
-        if (!window.__origSetHeader) {
-          window.__origSetHeader = origXHR;
-          window.XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-            if (name === 'x-codeium-csrf-token') {
-              window.__gpiCsrf = value;
-            }
-            return window.__origSetHeader.call(this, name, value);
-          };
         }
+        return origFetch.apply(this, args);
+      };
+
+      if (!window.__origSetHeader) {
+        const origXHR = window.XMLHttpRequest.prototype.setRequestHeader;
+        window.__origSetHeader = origXHR;
+        window.XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+          if (name === 'x-codeium-csrf-token') {
+            window.__gpiCsrf = value;
+          }
+          return window.__origSetHeader.call(this, name, value);
+        };
+      }
+
+      if (!window.__gpiCsrf && lsUrl) {
+        try {
+          const probeRes = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetProcesses', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'connect-protocol-version': '1' },
+            body: '{}',
+          });
+          const csrfHeader = probeRes.headers.get('x-codeium-csrf-token');
+          if (csrfHeader) window.__gpiCsrf = csrfHeader;
+        } catch {}
       }
 
       if (!window.__gpiCsrf && lsUrl) {
@@ -475,17 +485,56 @@ export async function gpiBootstrap(workspace) {
       if (csrfMatch) {
         const csrf = csrfMatch[1];
         console.log(`[GPI] CLI ps aux discovered csrf=${csrf.substring(0, 8)}..`);
-        await evalForWorkspace(workspace, `window.__gpiCsrf = ${JSON.stringify(csrf)}`, {
+
+        const validateExpr = `(async () => {
+          try {
+            const perf = performance.getEntriesByType('resource');
+            let lsUrl = null;
+            for (let i = perf.length - 1; i >= 0; i--) {
+              if (perf[i].name.includes('LanguageServerService')) {
+                lsUrl = new URL(perf[i].name).origin;
+                break;
+              }
+            }
+            if (!lsUrl) return { ok: false, error: 'no_ls' };
+            const origFetch = window.__origFetch || window.fetch;
+            const res = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': ${JSON.stringify(csrf)} },
+              body: '{}',
+            });
+            if (res.status === 200) {
+              window.__gpiCsrf = ${JSON.stringify(csrf)};
+              return { ok: true, csrf: ${JSON.stringify(csrf)} };
+            }
+            try {
+              await require('vscode').commands.executeCommand('windsurf.startCascade');
+            } catch {}
+            await new Promise(r => setTimeout(r, 2000));
+            if (window.__gpiCsrf && window.__gpiCsrf !== ${JSON.stringify(csrf)}) {
+              return { ok: true, csrf: window.__gpiCsrf, source: 'intercepted' };
+            }
+            return { ok: false, error: 'csrf_invalid', status: res.status };
+          } catch(e) {
+            return { ok: false, error: e.message };
+          }
+        })()`;
+        const valResult = await evalForWorkspace(workspace, validateExpr, {
           target: 'workbench',
-          timeout: 5000,
+          timeout: 15000,
         });
-        return {
-          ok: true,
-          csrf,
-          extensionPort: portMatch ? parseInt(portMatch[1]) : null,
-          hasCsrf: true,
-          installed: true,
-        };
+        const valBest = valResult.results?.find(r => r.value?.ok)?.value
+          || valResult.results?.[0]?.value;
+        console.log(`[GPI] CSRF validation: ${JSON.stringify(valBest).substring(0, 200)}`);
+        if (valBest?.ok && valBest?.csrf) {
+          return {
+            ok: true,
+            csrf: valBest.csrf,
+            extensionPort: portMatch ? parseInt(portMatch[1]) : null,
+            hasCsrf: true,
+            installed: true,
+          };
+        }
       }
     } catch (err) {
       console.error('[GPI] CLI CSRF discovery failed:', err.message);
