@@ -3,6 +3,7 @@ import {
   gpiBootstrap,
   gpiGetAllTrajectories,
   gpiReadCachedTrajectory,
+  gpiStartCascadeWatcher,
   trajectoryToConversation,
 } from './gpi.mjs';
 import { getTargetsOnPort, getTargetWorkspaceFolders, connectAndEval, FOLDER_EXPR } from './workspace-cdp.mjs';
@@ -21,6 +22,7 @@ class WorkspaceMonitor {
     this.bootstrapped = false;
     this.isBusy = false;
     this.polling = false;
+    this._activeWatchers = new Set();
 
     this.init();
   }
@@ -127,8 +129,19 @@ class WorkspaceMonitor {
         this._lastCascadeId = cascadeId;
       }
 
-      let cachedTargetId = null;
       const tc = this.workspace.targetCascades;
+      if (tc) {
+        for (const [tid, tcid] of tc) {
+          const key = `${tid}:${tcid}`;
+          if (!this._activeWatchers.has(key)) {
+            this._activeWatchers.add(key);
+            console.log(`[Monitor] Starting stream watcher for cascade ${tcid.slice(0, 8)} on target ${tid.slice(0, 8)}`);
+            gpiStartCascadeWatcher(this.workspace, tcid, tid).catch(() => { });
+          }
+        }
+      }
+
+      let cachedTargetId = null;
       if (tc) {
         for (const [tid, tcid] of tc) {
           if (tcid === cascadeId) { cachedTargetId = tid; break; }
