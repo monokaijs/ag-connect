@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu, Lock, Wand2, Copy, Check, Shield } from 'lucide-react';
 import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 import { isNative } from '@/lib/capacitor';
@@ -10,7 +10,16 @@ function authFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers });
 }
 
+const TABS = [
+  { id: 'general', label: 'General', icon: User },
+  { id: 'accounts', label: 'Accounts', icon: LogIn },
+  { id: 'ssh', label: 'SSH Keys', icon: Key },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+];
+
 export default function SettingsPage({ auth, push, onOpenMobileNav }) {
+  const [activeTab, setActiveTab] = useState('general');
+
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -19,6 +28,12 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
   const [publicKey, setPublicKey] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [genName, setGenName] = useState('');
+  const [genAlgo, setGenAlgo] = useState('ed25519');
+  const [generating, setGenerating] = useState(false);
+  const [copiedPub, setCopiedPub] = useState(null);
+
   const [firebaseStatus, setFirebaseStatus] = useState(null);
   const [serviceAccount, setServiceAccount] = useState('');
   const [savingFirebase, setSavingFirebase] = useState(false);
@@ -26,6 +41,13 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
   const [showFirebaseForm, setShowFirebaseForm] = useState(false);
 
   const [serverUrl, setServerUrl] = useState(getServerEndpoint() || '');
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   const fetchKeys = useCallback(async () => {
     try {
@@ -161,6 +183,24 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
     setSaving(false);
   };
 
+  const generateKey = async () => {
+    if (!genName.trim()) return;
+    setGenerating(true);
+    try {
+      const res = await authFetch(`${getApiBase()}/api/settings/ssh-keys/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: genName.trim(), algorithm: genAlgo }),
+      });
+      if (res.ok) {
+        setGenName('');
+        setShowGenerate(false);
+        fetchKeys();
+      }
+    } catch { }
+    setGenerating(false);
+  };
+
   const deleteKey = async (id) => {
     if (!confirm('Delete this SSH key?')) return;
     try {
@@ -247,453 +287,630 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
     }
   };
 
+  const changePassword = async () => {
+    setPasswordError('');
+    setPasswordSuccess(false);
+    if (!currentPassword || !newPassword) return setPasswordError('Both fields are required');
+    if (newPassword.length < 4) return setPasswordError('New password must be at least 4 characters');
+    if (newPassword !== confirmPassword) return setPasswordError('Passwords do not match');
+    setPasswordSaving(true);
+    try {
+      const res = await authFetch(`${getApiBase()}/api/settings/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPasswordError(data.error || 'Failed');
+      } else {
+        setPasswordSuccess(true);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => setPasswordSuccess(false), 3000);
+      }
+    } catch {
+      setPasswordError('Network error');
+    }
+    setPasswordSaving(false);
+  };
+
+  const copyPubKey = (id, text) => {
+    navigator.clipboard.writeText(text);
+    setCopiedPub(id);
+    setTimeout(() => setCopiedPub(null), 2000);
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-y-auto">
-      <div className="md:hidden flex items-center gap-3 px-4 h-11 border-b border-white/5 shrink-0">
+      <div className="md:hidden flex items-center gap-3 px-4 h-11 border-b border-white/5 shrink-0 sticky top-0 z-20 bg-zinc-950/95 backdrop-blur-sm">
         <button onClick={onOpenMobileNav} className="text-zinc-400 hover:text-white transition-colors">
           <Menu className="w-5 h-5" />
         </button>
         <span className="text-sm font-semibold text-white">Settings</span>
       </div>
+
       <div className="max-w-2xl mx-auto w-full p-6">
         <h1 className="text-lg font-semibold text-white mb-1 hidden md:block">Settings</h1>
-        <p className="text-xs text-zinc-500 mb-6">Manage your AG Connect configuration</p>
+        <p className="text-xs text-zinc-500 mb-4">Manage your AG Connect configuration</p>
 
-        {auth?.user && (
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <User className="w-4 h-4 text-zinc-400" />
-              <h2 className="text-sm font-medium text-white">Account</h2>
-            </div>
-            <div className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}>
-                  {auth.user.username?.charAt(0).toUpperCase()}
+        <div className="flex gap-1 mb-6 bg-zinc-900/50 p-1 rounded-lg border border-white/5 overflow-x-auto no-scrollbar">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${activeTab === tab.id
+                    ? 'bg-white/10 text-white shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+                  }`}
+              >
+                <Icon className="w-3 h-3" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'general' && (
+          <>
+            {auth?.user && (
+              <div className="mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <User className="w-4 h-4 text-zinc-400" />
+                  <h2 className="text-sm font-medium text-white">Account</h2>
                 </div>
-                <div>
-                  <div className="text-sm font-medium text-white">{auth.user.username}</div>
-                  <div className="text-[10px] text-zinc-500">Administrator</div>
+                <div className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}>
+                      {auth.user.username?.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-white">{auth.user.username}</div>
+                      <div className="text-[10px] text-zinc-500">Administrator</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { if (confirm('Sign out of AG Connect?')) auth.logout(); }}
+                    className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg border border-red-500/20 transition-colors"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    Sign Out
+                  </button>
                 </div>
               </div>
+            )}
+
+            {auth?.user && (
+              <div className="mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <Lock className="w-4 h-4 text-zinc-400" />
+                  <h2 className="text-sm font-medium text-white">Change Password</h2>
+                </div>
+                <div className="bg-zinc-900 border border-white/5 rounded-lg p-4 space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">Current Password</label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">New Password</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">Confirm New Password</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                    />
+                  </div>
+                  {passwordError && <p className="text-[11px] text-red-400">{passwordError}</p>}
+                  {passwordSuccess && <p className="text-[11px] text-emerald-400">Password changed successfully</p>}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={changePassword}
+                      disabled={!currentPassword || !newPassword || !confirmPassword || passwordSaving}
+                      className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                    >
+                      {passwordSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Update Password'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-8">
+              <div className="flex items-center gap-2 mb-3">
+                <HardDrive className="w-4 h-4 text-zinc-400" />
+                <h2 className="text-sm font-medium text-white">Host Mount Path</h2>
+              </div>
+              <p className="text-[11px] text-zinc-500 mb-4">
+                Set a host directory that all workspaces can access. File operations will be restricted to this path.
+              </p>
+              <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
+                <label className="block text-[11px] font-medium text-zinc-400 mb-1">Directory Path</label>
+                <div className="flex gap-2">
+                  <input
+                    value={hostMountPath}
+                    onChange={(e) => setHostMountPath(e.target.value)}
+                    placeholder="/Users/yourname/projects"
+                    className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono"
+                  />
+                  <button
+                    onClick={() => setShowHostPicker(true)}
+                    className="h-8 px-3 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-white/10 rounded-lg transition-colors flex items-center gap-1.5"
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                    Browse
+                  </button>
+                  <button
+                    onClick={() => saveHostPath(hostMountPath)}
+                    disabled={hostMountLoading}
+                    className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {hostMountLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : hostMountSaved ? 'Saved!' : 'Save'}
+                  </button>
+                </div>
+                {hostMountPath && (
+                  <p className="text-[10px] text-zinc-500 mt-1.5">
+                    All workspace file operations will be scoped to this directory.
+                  </p>
+                )}
+              </div>
+              <FolderPickerDialog
+                open={showHostPicker}
+                onClose={() => setShowHostPicker(false)}
+                onSelect={(path) => {
+                  setShowHostPicker(false);
+                  setHostMountPath(path);
+                  saveHostPath(path);
+                }}
+              />
+            </div>
+
+            {isNative && (
+              <div className="mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <Server className="w-4 h-4 text-zinc-400" />
+                  <h2 className="text-sm font-medium text-white">Server</h2>
+                </div>
+                <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
+                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">Server URL</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={serverUrl}
+                      onChange={(e) => setServerUrl(e.target.value)}
+                      placeholder="https://4123.xomnghien.com"
+                      className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                    />
+                    <button
+                      onClick={saveServerUrl}
+                      disabled={!serverUrl.trim()}
+                      className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 mt-1.5">Changing this will reload the app.</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'accounts' && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <LogIn className="w-4 h-4 text-zinc-400" />
+                <h2 className="text-sm font-medium text-white">Google Accounts</h2>
+                <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{googleAccounts.length}</span>
+              </div>
               <button
-                onClick={() => { if (confirm('Sign out of AG Connect?')) auth.logout(); }}
-                className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg border border-red-500/20 transition-colors"
+                onClick={startAddAccount}
+                className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
               >
-                <LogOut className="w-3 h-3" />
-                Sign Out
+                <Plus className="w-3 h-3" />
+                Add Account
               </button>
             </div>
+            <p className="text-[11px] text-zinc-500 mb-4">
+              Google accounts are shared across all workspaces. Add accounts here and assign them to workspaces.
+            </p>
+
+            {showAccountOAuth && (
+              <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mb-4">
+                <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 1: Open this link and sign in</label>
+                <div className="flex gap-2 mb-3">
+                  <input readOnly value={showAccountOAuth} className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-zinc-300 truncate outline-none font-mono" />
+                  <a href={showAccountOAuth} target="_blank" rel="noopener noreferrer" className="h-8 px-3 text-[11px] font-medium bg-zinc-700 text-white hover:bg-zinc-600 rounded-lg flex items-center transition-colors">Open</a>
+                </div>
+                <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 2: Paste the callback URL</label>
+                <textarea
+                  value={accountCallbackUrl}
+                  onChange={(e) => setAccountCallbackUrl(e.target.value)}
+                  placeholder="http://localhost:1/oauth/callback?code=...&state=..."
+                  className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none h-16 mb-3"
+                />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => { setShowAccountOAuth(null); setAccountCallbackUrl(''); }} className="h-7 px-3 text-[11px] text-zinc-400 hover:text-white rounded-lg border border-white/10 transition-colors">Cancel</button>
+                  <button onClick={submitAccountCallback} disabled={!accountCallbackUrl.includes('code=') || addingAccount} className="h-7 px-3 text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg transition-colors">
+                    {addingAccount ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add Account'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {accountsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+              </div>
+            ) : googleAccounts.length === 0 ? (
+              <div className="text-center py-8 text-zinc-600">
+                <LogIn className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No Google accounts linked</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {googleAccounts.map(a => {
+                  const q = accountQuotas[a._id];
+                  const tierColors = { ultra: 'text-amber-400 bg-amber-500/10 border-amber-500/20', pro: 'text-purple-400 bg-purple-500/10 border-purple-500/20', free: 'text-zinc-400 bg-zinc-700/50 border-zinc-600/30' };
+                  const tierLabel = q?.tier ? q.tier.charAt(0).toUpperCase() + q.tier.slice(1) : null;
+                  const quotaEntries = q?.quotas ? Object.entries(q.quotas) : [];
+                  return (
+                    <div key={a._id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {a.avatar ? (
+                            <img src={a.avatar} className="w-7 h-7 rounded-full shrink-0" alt="" />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                              {a.email?.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-white truncate">{a.name || a.email}</span>
+                              {tierLabel && (
+                                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${tierColors[q.tier] || tierColors.free}`}>{tierLabel}</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 truncate">{a.email}</div>
+                          </div>
+                        </div>
+                        <button onClick={() => deleteAccount(a._id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1 shrink-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {quotaEntries.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-white/5">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                            {quotaEntries.map(([name, pct]) => {
+                              const short = name.replace(/^models\//, '').replace(/^publishers\/google\/models\//, '');
+                              const barColor = pct > 50 ? 'bg-emerald-500' : pct > 20 ? 'bg-amber-500' : 'bg-red-500';
+                              return (
+                                <div key={name} className="flex items-center gap-2">
+                                  <span className="text-[9px] text-zinc-500 truncate w-24 shrink-0">{short}</span>
+                                  <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="text-[9px] text-zinc-500 w-7 text-right shrink-0">{pct}%</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <LogIn className="w-4 h-4 text-zinc-400" />
-              <h2 className="text-sm font-medium text-white">Google Accounts</h2>
-              <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{googleAccounts.length}</span>
-            </div>
-            <button
-              onClick={startAddAccount}
-              className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              Add Account
-            </button>
-          </div>
-          <p className="text-[11px] text-zinc-500 mb-4">
-            Google accounts are shared across all workspaces. Add accounts here and assign them to workspaces.
-          </p>
-
-          {showAccountOAuth && (
-            <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mb-4">
-              <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 1: Open this link and sign in</label>
-              <div className="flex gap-2 mb-3">
-                <input readOnly value={showAccountOAuth} className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-zinc-300 truncate outline-none font-mono" />
-                <a href={showAccountOAuth} target="_blank" rel="noopener noreferrer" className="h-8 px-3 text-[11px] font-medium bg-zinc-700 text-white hover:bg-zinc-600 rounded-lg flex items-center transition-colors">Open</a>
+        {activeTab === 'ssh' && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-zinc-400" />
+                <h2 className="text-sm font-medium text-white">SSH Keys</h2>
+                <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{keys.length}</span>
               </div>
-              <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 2: Paste the callback URL</label>
-              <textarea
-                value={accountCallbackUrl}
-                onChange={(e) => setAccountCallbackUrl(e.target.value)}
-                placeholder="http://localhost:1/oauth/callback?code=...&state=..."
-                className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none h-16 mb-3"
-              />
-              <div className="flex justify-end gap-2">
-                <button onClick={() => { setShowAccountOAuth(null); setAccountCallbackUrl(''); }} className="h-7 px-3 text-[11px] text-zinc-400 hover:text-white rounded-lg border border-white/10 transition-colors">Cancel</button>
-                <button onClick={submitAccountCallback} disabled={!accountCallbackUrl.includes('code=') || addingAccount} className="h-7 px-3 text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg transition-colors">
-                  {addingAccount ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add Account'}
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => { setShowGenerate(!showGenerate); setShowAdd(false); }}
+                  className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition-colors"
+                >
+                  <Wand2 className="w-3 h-3" />
+                  Generate
+                </button>
+                <button
+                  onClick={() => { setShowAdd(!showAdd); setShowGenerate(false); }}
+                  className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  Import
                 </button>
               </div>
             </div>
-          )}
+            <p className="text-[11px] text-zinc-500 mb-4">SSH keys are synced to workspace containers on startup for Git authentication.</p>
 
-          {accountsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-            </div>
-          ) : googleAccounts.length === 0 ? (
-            <div className="text-center py-8 text-zinc-600">
-              <LogIn className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No Google accounts linked</p>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {googleAccounts.map(a => {
-                const q = accountQuotas[a._id];
-                const tierColors = { ultra: 'text-amber-400 bg-amber-500/10 border-amber-500/20', pro: 'text-purple-400 bg-purple-500/10 border-purple-500/20', free: 'text-zinc-400 bg-zinc-700/50 border-zinc-600/30' };
-                const tierLabel = q?.tier ? q.tier.charAt(0).toUpperCase() + q.tier.slice(1) : null;
-                const quotaEntries = q?.quotas ? Object.entries(q.quotas) : [];
-                const avgUsage = quotaEntries.length > 0 ? Math.round(quotaEntries.reduce((s, [, v]) => s + v, 0) / quotaEntries.length) : null;
-                return (
-                  <div key={a._id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 min-w-0">
-                        {a.avatar ? (
-                          <img src={a.avatar} className="w-7 h-7 rounded-full shrink-0" alt="" />
-                        ) : (
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
-                            {a.email?.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-white truncate">{a.name || a.email}</span>
-                            {tierLabel && (
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${tierColors[q.tier] || tierColors.free}`}>{tierLabel}</span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-zinc-500 truncate">{a.email}</div>
+            {showGenerate && (
+              <div className="bg-zinc-900 border border-emerald-500/20 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-xs font-medium text-white">Generate New Key Pair</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">Key Name</label>
+                    <input
+                      value={genName}
+                      onChange={(e) => setGenName(e.target.value)}
+                      placeholder="e.g. github, deploy"
+                      className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-emerald-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">Algorithm</label>
+                    <select
+                      value={genAlgo}
+                      onChange={(e) => setGenAlgo(e.target.value)}
+                      className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white outline-none focus:border-emerald-500/50 appearance-none"
+                    >
+                      <option value="ed25519">Ed25519 (recommended)</option>
+                      <option value="ecdsa">ECDSA</option>
+                      <option value="rsa">RSA (4096-bit)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowGenerate(false)} className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={generateKey}
+                    disabled={!genName.trim() || generating}
+                    className="h-7 px-3 text-[11px] font-medium bg-emerald-600 text-white hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Generate'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showAdd && (
+              <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mb-4">
+                <div className="mb-3">
+                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">Key Name</label>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. github, gitlab, id_rsa"
+                    className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
+                  />
+                </div>
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-medium text-zinc-400">Private Key</label>
+                    <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
+                      <Upload className="w-3 h-3" />
+                      Upload
+                      <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, setPrivateKey)} />
+                    </label>
+                  </div>
+                  <textarea
+                    value={privateKey}
+                    onChange={(e) => setPrivateKey(e.target.value)}
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                    rows={4}
+                    className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none"
+                  />
+                </div>
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-medium text-zinc-400">Public Key <span className="text-zinc-600">(optional)</span></label>
+                    <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
+                      <Upload className="w-3 h-3" />
+                      Upload
+                      <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, setPublicKey)} />
+                    </label>
+                  </div>
+                  <textarea
+                    value={publicKey}
+                    onChange={(e) => setPublicKey(e.target.value)}
+                    placeholder="ssh-rsa AAAA..."
+                    rows={2}
+                    className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowAdd(false)}
+                    className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={addKey}
+                    disabled={!name.trim() || !privateKey.trim() || saving}
+                    className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save Key'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+              </div>
+            ) : keys.length === 0 ? (
+              <div className="text-center py-8 text-zinc-600">
+                <Key className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No SSH keys configured</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {keys.map(key => (
+                  <div key={key._id} className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Key className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-white truncate">{key.name}</div>
+                        <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+                          {key.publicKey ? key.publicKey.slice(0, 60) + '...' : 'Private key only'}
                         </div>
                       </div>
-                      <button onClick={() => deleteAccount(a._id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1 shrink-0">
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {key.publicKey && (
+                        <button
+                          onClick={() => copyPubKey(key._id, key.publicKey)}
+                          className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-emerald-400 transition-all p-1"
+                          title="Copy public key"
+                        >
+                          {copiedPub === key._id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteKey(key._id)}
+                        className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1"
+                      >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    {quotaEntries.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-white/5">
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                          {quotaEntries.map(([name, pct]) => {
-                            const short = name.replace(/^models\//, '').replace(/^publishers\/google\/models\//, '');
-                            const barColor = pct > 50 ? 'bg-emerald-500' : pct > 20 ? 'bg-amber-500' : 'bg-red-500';
-                            return (
-                              <div key={name} className="flex items-center gap-2">
-                                <span className="text-[9px] text-zinc-500 truncate w-24 shrink-0">{short}</span>
-                                <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
-                                </div>
-                                <span className="text-[9px] text-zinc-500 w-7 text-right shrink-0">{pct}%</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="mb-8">
-          <div className="flex items-center gap-2 mb-3">
-            <HardDrive className="w-4 h-4 text-zinc-400" />
-            <h2 className="text-sm font-medium text-white">Host Mount Path</h2>
-          </div>
-          <p className="text-[11px] text-zinc-500 mb-4">
-            Set a host directory that all workspaces can access. File operations will be restricted to this path.
-          </p>
-          <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
-            <label className="block text-[11px] font-medium text-zinc-400 mb-1">Directory Path</label>
-            <div className="flex gap-2">
-              <input
-                value={hostMountPath}
-                onChange={(e) => setHostMountPath(e.target.value)}
-                placeholder="/Users/yourname/projects"
-                className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono"
-              />
-              <button
-                onClick={() => setShowHostPicker(true)}
-                className="h-8 px-3 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-white/10 rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <FolderOpen className="w-3 h-3" />
-                Browse
-              </button>
-              <button
-                onClick={() => saveHostPath(hostMountPath)}
-                disabled={hostMountLoading}
-                className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
-              >
-                {hostMountLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : hostMountSaved ? 'Saved!' : 'Save'}
-              </button>
-            </div>
-            {hostMountPath && (
-              <p className="text-[10px] text-zinc-500 mt-1.5">
-                All workspace file operations will be scoped to this directory.
-              </p>
-            )}
-          </div>
-          <FolderPickerDialog
-            open={showHostPicker}
-            onClose={() => setShowHostPicker(false)}
-            onSelect={(path) => {
-              setShowHostPicker(false);
-              setHostMountPath(path);
-              saveHostPath(path);
-            }}
-          />
-        </div>
-
-        {isNative && (
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <Server className="w-4 h-4 text-zinc-400" />
-              <h2 className="text-sm font-medium text-white">Server</h2>
-            </div>
-            <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
-              <label className="block text-[11px] font-medium text-zinc-400 mb-1">Server URL</label>
-              <div className="flex gap-2">
-                <input
-                  value={serverUrl}
-                  onChange={(e) => setServerUrl(e.target.value)}
-                  placeholder="https://4123.xomnghien.com"
-                  className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
-                />
-                <button
-                  onClick={saveServerUrl}
-                  disabled={!serverUrl.trim()}
-                  className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
-                >
-                  Save
-                </button>
+                ))}
               </div>
-              <p className="text-[10px] text-zinc-500 mt-1.5">Changing this will reload the app.</p>
-            </div>
+            )}
           </div>
         )}
 
-        <div className="mb-8">
-          <div className="flex items-center gap-2 mb-3">
-            <Bell className="w-4 h-4 text-zinc-400" />
-            <h2 className="text-sm font-medium text-white">Push Notifications</h2>
-          </div>
-          <p className="text-[11px] text-zinc-500 mb-4">
-            Configure Firebase Cloud Messaging to receive push notifications when agent tasks complete.
-          </p>
-
-          {firebaseStatus && (
-            <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
-              {firebaseStatus.configured ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-white">Firebase configured</div>
-                    <div className="text-[10px] text-zinc-500">{firebaseStatus.tokenCount} device(s) registered</div>
-                  </div>
-                  <button
-                    onClick={removeFirebase}
-                    className="text-zinc-600 hover:text-red-400 transition-colors p-1"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <XCircle className="w-4 h-4 text-zinc-500 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-zinc-400">Firebase not configured</div>
-                    <div className="text-[10px] text-zinc-500">Add a service account to enable push notifications</div>
-                  </div>
-                </>
-              )}
+        {activeTab === 'notifications' && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <Bell className="w-4 h-4 text-zinc-400" />
+              <h2 className="text-sm font-medium text-white">Push Notifications</h2>
             </div>
-          )}
+            <p className="text-[11px] text-zinc-500 mb-4">
+              Configure Firebase Cloud Messaging to receive push notifications when agent tasks complete.
+            </p>
 
-          {push?.isNative && (
-            <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
-              <Bell className="w-4 h-4 text-zinc-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-zinc-300">Notification Permission</div>
-                <div className="text-[10px] text-zinc-500">
-                  {push.permissionStatus === 'granted' ? 'Granted' :
-                    push.permissionStatus === 'denied' ? 'Denied — enable in device settings' :
-                      'Not requested yet'}
-                </div>
-              </div>
-              {push.permissionStatus !== 'granted' && push.permissionStatus !== 'denied' && (
-                <button
-                  onClick={push.requestPermission}
-                  className="h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
-                >
-                  Request
-                </button>
-              )}
-            </div>
-          )}
-
-          {!showFirebaseForm && (!firebaseStatus?.configured) && (
-            <button
-              onClick={() => setShowFirebaseForm(true)}
-              className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
-            >
-              <Flame className="w-3 h-3" />
-              Add Firebase Service Account
-            </button>
-          )}
-
-          {showFirebaseForm && (
-            <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mt-3">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-medium text-zinc-400">Service Account JSON</label>
-                <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
-                  <Upload className="w-3 h-3" />
-                  Upload
-                  <input type="file" accept=".json" className="hidden" onChange={(e) => handleFileUpload(e, setServiceAccount)} />
-                </label>
-              </div>
-              <textarea
-                value={serviceAccount}
-                onChange={(e) => setServiceAccount(e.target.value)}
-                placeholder='{"type": "service_account", "project_id": "...", ...}'
-                rows={6}
-                className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none mb-3"
-              />
-              {firebaseError && (
-                <p className="text-[11px] text-red-400 mb-3">{firebaseError}</p>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => { setShowFirebaseForm(false); setServiceAccount(''); setFirebaseError(''); }}
-                  className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveFirebase}
-                  disabled={!serviceAccount.trim() || savingFirebase}
-                  className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
-                >
-                  {savingFirebase ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Key className="w-4 h-4 text-zinc-400" />
-              <h2 className="text-sm font-medium text-white">SSH Keys</h2>
-              <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{keys.length}</span>
-            </div>
-            <button
-              onClick={() => setShowAdd(!showAdd)}
-              className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              Add Key
-            </button>
-          </div>
-          <p className="text-[11px] text-zinc-500 mb-4">SSH keys are synced to workspace containers on startup for Git authentication.</p>
-
-          {showAdd && (
-            <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mb-4">
-              <div className="mb-3">
-                <label className="block text-[11px] font-medium text-zinc-400 mb-1">Key Name</label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. github, gitlab, id_rsa"
-                  className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
-                />
-              </div>
-              <div className="mb-3">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[11px] font-medium text-zinc-400">Private Key</label>
-                  <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
-                    <Upload className="w-3 h-3" />
-                    Upload
-                    <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, setPrivateKey)} />
-                  </label>
-                </div>
-                <textarea
-                  value={privateKey}
-                  onChange={(e) => setPrivateKey(e.target.value)}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                  rows={4}
-                  className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none"
-                />
-              </div>
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[11px] font-medium text-zinc-400">Public Key <span className="text-zinc-600">(optional)</span></label>
-                  <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
-                    <Upload className="w-3 h-3" />
-                    Upload
-                    <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, setPublicKey)} />
-                  </label>
-                </div>
-                <textarea
-                  value={publicKey}
-                  onChange={(e) => setPublicKey(e.target.value)}
-                  placeholder="ssh-rsa AAAA..."
-                  rows={2}
-                  className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none"
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setShowAdd(false)}
-                  className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={addKey}
-                  disabled={!name.trim() || !privateKey.trim() || saving}
-                  className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
-                >
-                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save Key'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-            </div>
-          ) : keys.length === 0 ? (
-            <div className="text-center py-8 text-zinc-600">
-              <Key className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No SSH keys configured</p>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {keys.map(key => (
-                <div key={key._id} className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Key className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-white truncate">{key.name}</div>
-                      <div className="text-[10px] text-zinc-500 truncate mt-0.5">
-                        {key.publicKey ? key.publicKey.slice(0, 60) + '...' : 'Private key only'}
-                      </div>
+            {firebaseStatus && (
+              <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
+                {firebaseStatus.configured ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-white">Firebase configured</div>
+                      <div className="text-[10px] text-zinc-500">{firebaseStatus.tokenCount} device(s) registered</div>
                     </div>
+                    <button
+                      onClick={removeFirebase}
+                      className="text-zinc-600 hover:text-red-400 transition-colors p-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-4 h-4 text-zinc-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-zinc-400">Firebase not configured</div>
+                      <div className="text-[10px] text-zinc-500">Add a service account to enable push notifications</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {push?.isNative && (
+              <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-lg px-4 py-3 mb-3">
+                <Bell className="w-4 h-4 text-zinc-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-zinc-300">Notification Permission</div>
+                  <div className="text-[10px] text-zinc-500">
+                    {push.permissionStatus === 'granted' ? 'Granted' :
+                      push.permissionStatus === 'denied' ? 'Denied — enable in device settings' :
+                        'Not requested yet'}
                   </div>
+                </div>
+                {push.permissionStatus !== 'granted' && push.permissionStatus !== 'denied' && (
                   <button
-                    onClick={() => deleteKey(key._id)}
-                    className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1"
+                    onClick={push.requestPermission}
+                    className="h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    Request
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!showFirebaseForm && (!firebaseStatus?.configured) && (
+              <button
+                onClick={() => setShowFirebaseForm(true)}
+                className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
+              >
+                <Flame className="w-3 h-3" />
+                Add Firebase Service Account
+              </button>
+            )}
+
+            {showFirebaseForm && (
+              <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mt-3">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-medium text-zinc-400">Service Account JSON</label>
+                  <label className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer transition-colors">
+                    <Upload className="w-3 h-3" />
+                    Upload
+                    <input type="file" accept=".json" className="hidden" onChange={(e) => handleFileUpload(e, setServiceAccount)} />
+                  </label>
+                </div>
+                <textarea
+                  value={serviceAccount}
+                  onChange={(e) => setServiceAccount(e.target.value)}
+                  placeholder='{"type": "service_account", "project_id": "...", ...}'
+                  rows={6}
+                  className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono resize-none mb-3"
+                />
+                {firebaseError && (
+                  <p className="text-[11px] text-red-400 mb-3">{firebaseError}</p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => { setShowFirebaseForm(false); setServiceAccount(''); setFirebaseError(''); }}
+                    className="h-7 px-3 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg border border-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveFirebase}
+                    disabled={!serviceAccount.trim() || savingFirebase}
+                    className="h-7 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {savingFirebase ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
                   </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 pt-4 border-t border-white/5 pb-6 text-center">
           <p className="text-[11px] text-zinc-600">AG Connect v{__APP_VERSION__}</p>

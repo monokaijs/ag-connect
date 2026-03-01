@@ -210,6 +210,46 @@ function setupSettingsRoutes(app, broadcast) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  app.post('/api/settings/ssh-keys/generate', async (req, res) => {
+    const { name, algorithm } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name required' });
+    const algo = ['ed25519', 'rsa', 'ecdsa'].includes(algorithm) ? algorithm : 'ed25519';
+    const bits = algo === 'rsa' ? ['-b', '4096'] : [];
+    try {
+      const { execSync } = await import('child_process');
+      const { mkdtempSync, readFileSync, rmSync } = await import('fs');
+      const { join } = await import('path');
+      const tmpDir = mkdtempSync('/tmp/sshgen-');
+      const keyPath = join(tmpDir, 'key');
+      execSync(`ssh-keygen -t ${algo} ${bits.join(' ')} -f ${keyPath} -N "" -C "${name}"`, { stdio: 'pipe' });
+      const privateKey = readFileSync(keyPath, 'utf-8');
+      const publicKey = readFileSync(`${keyPath}.pub`, 'utf-8');
+      rmSync(tmpDir, { recursive: true });
+      const key = new SshKey({ name, privateKey, publicKey });
+      await key.save();
+      res.json({ _id: key._id, name: key.name, publicKey: key.publicKey, createdAt: key.createdAt });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/settings/password', async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords required' });
+    if (newPassword.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    try {
+      const { User } = await import('./models/user.mjs');
+      const user = await User.findById(req.userId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      if (!user.verifyPassword(currentPassword)) return res.status(401).json({ error: 'Current password is incorrect' });
+      user.passwordHash = User.hashPassword(newPassword);
+      await user.save();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 export { setupSettingsRoutes };
