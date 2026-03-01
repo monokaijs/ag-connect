@@ -695,11 +695,17 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
   if (existing) existing._watcherRunning = false;
 
   const containerId = workspace.containerId;
-  if (!containerId) return { ok: false, error: 'no_container' };
+  if (!containerId) {
+    console.log(`[GPI] Watcher failed: no containerId for ${workspace._id}`);
+    return { ok: false, error: 'no_container' };
+  }
 
   const csrf = workspace.gpi?.csrf;
   const lsUrl = workspace.gpi?.lsUrl;
-  if (!csrf || !lsUrl) return { ok: false, error: 'no_csrf_or_ls' };
+  if (!csrf || !lsUrl) {
+    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsUrl=${!!lsUrl} gpi=${JSON.stringify(workspace.gpi || {}).substring(0, 200)}`);
+    return { ok: false, error: 'no_csrf_or_ls' };
+  }
 
   console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)} via docker exec`);
 
