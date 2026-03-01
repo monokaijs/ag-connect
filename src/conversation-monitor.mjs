@@ -205,6 +205,7 @@ class WorkspaceMonitor {
 
       if (!prev || prev !== hash) {
         lastHash.set(this.wsId, hash);
+        console.log(`[Monitor] Hash changed for ${this.wsId}: ${prev?.slice(0, 30)} → ${hash.slice(0, 30)}`);
 
         const payload = {
           items: data.items,
