@@ -695,10 +695,45 @@ function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
   });
 }
 
-function startWatcherLoop(containerId, lsUrl, csrf, cascadeId, state) {
+async function findLsForCascade(containerId, cascadeId) {
+  const discovery = await discoverCsrfViaDocker(containerId);
+  if (!discovery?.candidates) return null;
+
+  const knownPorts = new Set();
+  const portCmd = `docker exec ${containerId} bash -c "awk 'NR>1 && \\$4==\"0A\"{split(\\$2,a,\":\"); cmd=\"printf %d 0x\"a[2]; cmd | getline p; close(cmd); if(p>30000 && p<50000) print p}' /proc/1/net/tcp | sort -un"`;
+  try {
+    const portOut = await new Promise((resolve) => {
+      exec(portCmd, { timeout: 5000 }, (err, stdout) => resolve(stdout || ''));
+    });
+    portOut.trim().split('\n').forEach(p => { if (p) knownPorts.add(parseInt(p)); });
+  } catch { }
+
+  for (const c of discovery.candidates) {
+    for (const port of knownPorts) {
+      const lsUrl = `https://127.0.0.1:${port}`;
+      const data = await dockerExecFetch(containerId, lsUrl, c.csrf, 'GetCascadeTrajectory', { cascadeId });
+      if (data?.trajectory) {
+        return { csrf: c.csrf, lsUrl };
+      }
+    }
+  }
+  return null;
+}
+
+function startWatcherLoop(containerId, cascadeId, state) {
   const fetchAndCache = async () => {
+    if (!state._lsUrl || !state._csrf) {
+      const found = await findLsForCascade(containerId, cascadeId);
+      if (found) {
+        state._csrf = found.csrf;
+        state._lsUrl = found.lsUrl;
+        console.log(`[GPI] Watcher for ${cascadeId.slice(0, 8)} found LS at ${found.lsUrl} csrf=${found.csrf.slice(0, 8)}`);
+      } else {
+        return;
+      }
+    }
     try {
-      const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId });
+      const data = await dockerExecFetch(containerId, state._lsUrl, state._csrf, 'GetCascadeTrajectory', { cascadeId });
       if (data?.trajectory) {
         const steps = data.trajectory.steps || [];
         const last = steps[steps.length - 1];
@@ -707,6 +742,9 @@ function startWatcherLoop(containerId, lsUrl, csrf, cascadeId, state) {
         state.isBusy = busy;
         state.ts = Date.now();
         state.status = busy ? 'busy' : 'idle';
+      } else if (data?.code === 'unauthenticated') {
+        state._csrf = null;
+        state._lsUrl = null;
       }
     } catch { }
   };
@@ -730,9 +768,7 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
   const key = `${workspace._id}:${targetId || 'global'}`;
   const existing = cascadeCache.get(key);
   if (existing?._watcherRunning && existing?.cascadeId === cascadeId) return { ok: true, already: true };
-  if (existing) {
-    existing._watcherRunning = false;
-  }
+  if (existing) existing._watcherRunning = false;
 
   const containerId = workspace.containerId;
   if (!containerId) {
@@ -740,20 +776,12 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
     return { ok: false, error: 'no_container' };
   }
 
-  const perTarget = targetInfoCache.get(workspace._id.toString())?.[targetId];
-  const csrf = perTarget?.csrf || workspace.gpi?.csrfToken;
-  const lsUrl = perTarget?.lsUrl || (workspace.gpi?.lsPort ? `https://127.0.0.1:${workspace.gpi.lsPort}` : null);
-  if (!csrf || !lsUrl) {
-    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsUrl=${!!lsUrl} target=${targetId?.slice(0, 8)}`);
-    return { ok: false, error: 'no_csrf_or_ls' };
-  }
-
-  console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)} on ${lsUrl}`);
+  console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)}`);
 
   const state = { _watcherRunning: true, cascadeId, isBusy: false, ts: 0, _restartedAt: Date.now() };
   cascadeCache.set(key, state);
 
-  startWatcherLoop(containerId, lsUrl, csrf, cascadeId, state);
+  startWatcherLoop(containerId, cascadeId, state);
   return { ok: true };
 }
 
