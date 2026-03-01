@@ -683,6 +683,43 @@ function buildStartWatcherExpr() {
       const origFetch = window.__origFetch || window.fetch;
       const LS = '${LS_PREFIX}';
 
+      const fetchTrajectory = async (cid) => {
+        try {
+          const perf = performance.getEntriesByType('resource');
+          let lsUrl = null;
+          for (let i = perf.length - 1; i >= 0; i--) {
+            if (perf[i].name.includes('LanguageServerService')) {
+              lsUrl = new URL(perf[i].name).origin;
+              break;
+            }
+          }
+          if (!lsUrl) return null;
+          const csrf = window.__gpiCsrf;
+          if (!csrf) return null;
+          const headers = window.__gpiHeaders
+            ? { ...window.__gpiHeaders, 'content-type': 'application/json', 'x-codeium-csrf-token': csrf }
+            : { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': csrf };
+          const r = await origFetch(lsUrl + LS + '/GetCascadeTrajectory', {
+            method: 'POST', headers, body: JSON.stringify({ cascadeId: cid }),
+          });
+          return await r.json();
+        } catch { return null; }
+      };
+
+      const updateFromTrajectory = (data) => {
+        if (!data?.trajectory) return;
+        const steps = data.trajectory.steps || [];
+        const last = steps[steps.length - 1];
+        const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
+        window.__gpiCascade = {
+          cascadeId: data.trajectory.cascadeId,
+          data: data,
+          isBusy: busy,
+          ts: Date.now(),
+          status: busy ? 'busy' : 'idle',
+        };
+      };
+
       window.fetch = async function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
         const res = await origFetch.apply(this, args);
@@ -690,34 +727,58 @@ function buildStartWatcherExpr() {
         if (url.includes(LS + '/GetCascadeTrajectory')) {
           try {
             const clone = res.clone();
+            clone.json().then(updateFromTrajectory).catch(() => {});
+          } catch {}
+        }
+
+        if (url.includes(LS + '/StartCascade')) {
+          try {
+            const clone = res.clone();
             clone.json().then(data => {
-              if (data?.trajectory) {
-                const steps = data.trajectory.steps || [];
-                const last = steps[steps.length - 1];
-                const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
-                window.__gpiCascade = {
-                  cascadeId: data.trajectory.cascadeId,
-                  data: data,
-                  isBusy: busy,
-                  ts: Date.now(),
-                  status: busy ? 'busy' : 'idle',
-                };
+              if (data?.cascadeId) {
+                window.__gpiCascade = { cascadeId: data.cascadeId, isBusy: true, ts: Date.now(), status: 'started' };
               }
             }).catch(() => {});
           } catch {}
         }
 
+        if (url.includes(LS + '/SendUserCascadeMessage')) {
+          try {
+            const reqBody = args[1]?.body;
+            if (reqBody) {
+              const bodyStr = typeof reqBody === 'string' ? reqBody : new TextDecoder().decode(reqBody);
+              const parsed = JSON.parse(bodyStr);
+              if (parsed.cascadeId) {
+                window.__gpiCascade = { ...(window.__gpiCascade || {}), cascadeId: parsed.cascadeId, isBusy: true, ts: Date.now(), status: 'sending' };
+              }
+            }
+          } catch {}
+        }
+
         if (url.includes(LS + '/StreamCascadeReactiveUpdates') && res.body) {
           try {
+            const streamCascadeId = window.__gpiCascade?.cascadeId;
+
             const [s1, s2] = res.body.tee();
             const reader = s2.getReader();
+            let pending = false;
             const pump = async () => {
               try {
                 while (true) {
                   const { done } = await reader.read();
-                  if (done) break;
-                  if (window.__gpiCascade) {
-                    window.__gpiCascade = { ...window.__gpiCascade, streamActive: true, lastStreamTs: Date.now() };
+                  if (done) {
+                    if (streamCascadeId) {
+                      const traj = await fetchTrajectory(streamCascadeId);
+                      if (traj) updateFromTrajectory(traj);
+                    }
+                    break;
+                  }
+                  if (!pending && streamCascadeId) {
+                    pending = true;
+                    fetchTrajectory(streamCascadeId).then(traj => {
+                      if (traj) updateFromTrajectory(traj);
+                      pending = false;
+                    }).catch(() => { pending = false; });
                   }
                 }
               } catch {}
