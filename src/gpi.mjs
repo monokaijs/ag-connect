@@ -695,25 +695,44 @@ function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
   });
 }
 
+const lsDiscoveryCache = new Map();
+
 async function findLsForCascade(containerId, cascadeId) {
-  const discovery = await discoverCsrfViaDocker(containerId);
-  if (!discovery?.candidates) return null;
+  const cacheKey = containerId;
+  let cached = lsDiscoveryCache.get(cacheKey);
+  const now = Date.now();
 
-  const knownPorts = new Set();
-  const portCmd = `docker exec ${containerId} bash -c "awk 'NR>1 && \\$4==\"0A\"{split(\\$2,a,\":\"); cmd=\"printf %d 0x\"a[2]; cmd | getline p; close(cmd); if(p>30000 && p<50000) print p}' /proc/1/net/tcp | sort -un"`;
-  try {
-    const portOut = await new Promise((resolve) => {
-      exec(portCmd, { timeout: 5000 }, (err, stdout) => resolve(stdout || ''));
-    });
-    portOut.trim().split('\n').forEach(p => { if (p) knownPorts.add(parseInt(p)); });
-  } catch { }
+  if (!cached || now - cached.ts > 30000) {
+    const discovery = await discoverCsrfViaDocker(containerId);
+    if (!discovery?.candidates) return null;
 
-  for (const c of discovery.candidates) {
-    for (const port of knownPorts) {
+    const ports = [];
+    try {
+      const portOut = await new Promise((resolve) => {
+        exec(`docker exec ${containerId} cat /proc/1/net/tcp`, { timeout: 5000 }, (err, stdout) => resolve(stdout || ''));
+      });
+      for (const line of portOut.split('\n').slice(1)) {
+        const parts = line.trim().split(/\s+/);
+        if (parts[3] === '0A') {
+          const hexPort = parts[1]?.split(':')[1];
+          if (hexPort) {
+            const p = parseInt(hexPort, 16);
+            if (p > 30000 && p < 50000) ports.push(p);
+          }
+        }
+      }
+    } catch { }
+
+    cached = { csrfs: discovery.candidates.map(c => c.csrf), ports: [...new Set(ports)], ts: now };
+    lsDiscoveryCache.set(cacheKey, cached);
+  }
+
+  for (const csrf of cached.csrfs) {
+    for (const port of cached.ports) {
       const lsUrl = `https://127.0.0.1:${port}`;
-      const data = await dockerExecFetch(containerId, lsUrl, c.csrf, 'GetCascadeTrajectory', { cascadeId });
+      const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId });
       if (data?.trajectory) {
-        return { csrf: c.csrf, lsUrl };
+        return { csrf, lsUrl, data };
       }
     }
   }
@@ -721,6 +740,17 @@ async function findLsForCascade(containerId, cascadeId) {
 }
 
 function startWatcherLoop(containerId, cascadeId, state) {
+  const updateState = (data) => {
+    if (!data?.trajectory) return;
+    const steps = data.trajectory.steps || [];
+    const last = steps[steps.length - 1];
+    const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
+    state.data = data;
+    state.isBusy = busy;
+    state.ts = Date.now();
+    state.status = busy ? 'busy' : 'idle';
+  };
+
   const fetchAndCache = async () => {
     if (!state._lsUrl || !state._csrf) {
       const found = await findLsForCascade(containerId, cascadeId);
@@ -728,6 +758,10 @@ function startWatcherLoop(containerId, cascadeId, state) {
         state._csrf = found.csrf;
         state._lsUrl = found.lsUrl;
         console.log(`[GPI] Watcher for ${cascadeId.slice(0, 8)} found LS at ${found.lsUrl} csrf=${found.csrf.slice(0, 8)}`);
+        if (found.data) {
+          updateState(found.data);
+          return;
+        }
       } else {
         return;
       }
@@ -735,16 +769,11 @@ function startWatcherLoop(containerId, cascadeId, state) {
     try {
       const data = await dockerExecFetch(containerId, state._lsUrl, state._csrf, 'GetCascadeTrajectory', { cascadeId });
       if (data?.trajectory) {
-        const steps = data.trajectory.steps || [];
-        const last = steps[steps.length - 1];
-        const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
-        state.data = data;
-        state.isBusy = busy;
-        state.ts = Date.now();
-        state.status = busy ? 'busy' : 'idle';
+        updateState(data);
       } else if (data?.code === 'unauthenticated') {
         state._csrf = null;
         state._lsUrl = null;
+        lsDiscoveryCache.delete(containerId);
       }
     } catch { }
   };
