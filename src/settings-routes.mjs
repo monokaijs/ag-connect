@@ -3,7 +3,7 @@ import { getSettings } from './models/settings.mjs';
 import { Account } from './models/account.mjs';
 import { Workspace } from './models/workspace.mjs';
 import { injectTokensIntoContainer } from './token-injector.mjs';
-import { restartIDEInContainer, waitForContainerReady } from './docker-manager.mjs';
+import { restartIDEInContainer, waitForContainerReady, syncSshKeysToWorkspaces } from './docker-manager.mjs';
 import { getValidAccessToken, fetchWorkspaceQuota } from './quota.mjs';
 import { getCachedQuota, setCachedQuota } from './config.mjs';
 
@@ -196,6 +196,7 @@ function setupSettingsRoutes(app, broadcast) {
       if (!name || !privateKey) return res.status(400).json({ error: 'Name and private key required' });
       const key = new SshKey({ name, privateKey, publicKey: publicKey || '' });
       await key.save();
+      syncSshKeysToWorkspaces().catch(() => { });
       res.json({ _id: key._id, name: key.name, publicKey: key.publicKey, createdAt: key.createdAt });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -205,6 +206,7 @@ function setupSettingsRoutes(app, broadcast) {
   app.delete('/api/settings/ssh-keys/:id', async (req, res) => {
     try {
       await SshKey.findByIdAndDelete(req.params.id);
+      syncSshKeysToWorkspaces().catch(() => { });
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -228,6 +230,7 @@ function setupSettingsRoutes(app, broadcast) {
       rmSync(tmpDir, { recursive: true });
       const key = new SshKey({ name, privateKey, publicKey });
       await key.save();
+      syncSshKeysToWorkspaces().catch(() => { });
       res.json({ _id: key._id, name: key.name, publicKey: key.publicKey, createdAt: key.createdAt });
     } catch (err) {
       res.status(500).json({ error: err.message });

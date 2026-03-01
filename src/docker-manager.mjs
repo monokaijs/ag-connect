@@ -308,6 +308,36 @@ async function restartIDEInContainer(containerId) {
   await container.restart({ t: 5 });
 }
 
+async function syncSshKeysToContainer(containerId) {
+  const sshKeys = await SshKey.find();
+  if (sshKeys.length === 0) return;
+  await execInContainer(containerId, 'mkdir -p /home/aguser/.ssh && chmod 700 /home/aguser/.ssh');
+  for (const key of sshKeys) {
+    const safeName = key.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const escaped = key.privateKey.replace(/'/g, "'\\''");
+    await execInContainer(containerId, `printf '%s\\n' '${escaped}' > /home/aguser/.ssh/${safeName} && chmod 600 /home/aguser/.ssh/${safeName}`);
+    if (key.publicKey) {
+      const escapedPub = key.publicKey.replace(/'/g, "'\\''");
+      await execInContainer(containerId, `printf '%s\\n' '${escapedPub}' > /home/aguser/.ssh/${safeName}.pub && chmod 644 /home/aguser/.ssh/${safeName}.pub`);
+    }
+  }
+  await execInContainer(containerId, 'ssh-keyscan -H github.com gitlab.com >> /home/aguser/.ssh/known_hosts 2>/dev/null; chmod 644 /home/aguser/.ssh/known_hosts');
+  if (sshKeys.length === 1) {
+    const safeName = sshKeys[0].name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    await execInContainer(containerId, `cp /home/aguser/.ssh/${safeName} /home/aguser/.ssh/id_rsa && chmod 600 /home/aguser/.ssh/id_rsa`);
+  }
+}
+
+async function syncSshKeysToWorkspaces() {
+  const workspaces = await Workspace.find({ status: 'running' });
+  for (const ws of workspaces) {
+    if (!ws.containerId) continue;
+    try {
+      await syncSshKeysToContainer(ws.containerId);
+    } catch { }
+  }
+}
+
 export {
   createWorkspaceContainer,
   stopWorkspaceContainer,
@@ -316,4 +346,6 @@ export {
   execInContainer,
   restartIDEInContainer,
   waitForContainerReady,
+  syncSshKeysToContainer,
+  syncSshKeysToWorkspaces,
 };

@@ -14,7 +14,7 @@ RUN npm ci --omit=dev
 
 FROM node:20-alpine
 
-RUN apk add --no-cache nginx
+RUN apk add --no-cache nginx openssh-keygen
 
 WORKDIR /app
 
