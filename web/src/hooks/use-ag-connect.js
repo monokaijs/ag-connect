@@ -6,6 +6,7 @@ export function useAgConnect(workspace, ws, activeTargetId) {
   const [status, setStatus] = useState('disconnected');
   const [statusText, setStatusText] = useState('');
   const [currentModel, setCurrentModel] = useState(workspace?.gpi?.selectedModel || '');
+  const [currentModelUid, setCurrentModelUid] = useState(workspace?.gpi?.selectedModelUid || '');
   const [isBusy, setIsBusy] = useState(false);
   const [items, setItems] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,8 +36,9 @@ export function useAgConnect(workspace, ws, activeTargetId) {
   const sendMessage = useCallback(async (text) => {
     const body = { text };
     if (activeTargetRef.current) body.targetId = activeTargetRef.current;
+    if (currentModelUid) body.modelUid = currentModelUid;
     return api('POST', '/cdp/send', body);
-  }, [api]);
+  }, [api, currentModelUid]);
 
   const stopAgent = useCallback(async () => {
     return api('POST', '/cdp/stop', {});
@@ -48,8 +50,8 @@ export function useAgConnect(workspace, ws, activeTargetId) {
 
   const changeModel = useCallback(async (model, modelUid) => {
     setCurrentModel(model);
-    return api('POST', '/cdp/models/select', { model, modelUid });
-  }, [api]);
+    setCurrentModelUid(modelUid || '');
+  }, []);
 
   const clickAcceptAll = useCallback(async () => {
     return api('POST', '/cdp/accept-all', {});
@@ -63,8 +65,9 @@ export function useAgConnect(workspace, ws, activeTargetId) {
     setItems([]);
     const body = {};
     if (activeTargetRef.current) body.targetId = activeTargetRef.current;
+    if (currentModelUid) body.modelUid = currentModelUid;
     return api('POST', '/cdp/new-chat', body);
-  }, [api]);
+  }, [api, currentModelUid]);
 
   const fetchConversations = useCallback(async (folder) => {
     const qs = folder ? `?folder=${encodeURIComponent(folder)}` : '';
@@ -121,6 +124,7 @@ export function useAgConnect(workspace, ws, activeTargetId) {
     setHasAcceptAll(false);
     setHasRejectAll(false);
     setCurrentModel('');
+    setCurrentModelUid('');
     setStatus('disconnected');
     setTargets([]);
   }, [workspaceId]);
@@ -138,7 +142,11 @@ export function useAgConnect(workspace, ws, activeTargetId) {
         } else if (res?.ok) {
           val = res;
         }
-        if (val?.current) setCurrentModel(val.current);
+        if (val?.current) {
+          setCurrentModel(val.current);
+          const found = val.models?.find(m => m.label === val.current);
+          if (found?.modelUid) setCurrentModelUid(found.modelUid);
+        }
       }).catch(() => { });
 
       fetchTargets().then(res => {

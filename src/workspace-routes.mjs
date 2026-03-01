@@ -439,6 +439,7 @@ function setupWorkspaceRoutes(app, broadcast) {
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     const text = req.body.text;
     const targetId = req.body.targetId;
+    const modelUid = req.body.modelUid;
     if (!text) return res.status(400).json({ ok: false, error: 'missing text' });
     console.log(`[Send] Message for ${req.params.id} target=${targetId || 'global'}: "${text.substring(0, 80)}"`);
 
@@ -449,7 +450,7 @@ function setupWorkspaceRoutes(app, broadcast) {
 
       if (!cascadeId) {
         console.log(`[Send] No active cascade, starting new one...`);
-        const newChat = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid, targetId);
+        const newChat = await gpiStartCascade(workspace, modelUid || workspace.gpi?.selectedModelUid, targetId);
         console.log('[Send] StartCascade result:', JSON.stringify(newChat).substring(0, 300));
         if (newChat.ok && newChat.data?.cascadeId) {
           cascadeId = newChat.data.cascadeId;
@@ -462,7 +463,7 @@ function setupWorkspaceRoutes(app, broadcast) {
       }
       console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
 
-      const result = await gpiSendMessage(workspace, cascadeId, text, workspace.gpi?.selectedModelUid, targetId);
+      const result = await gpiSendMessage(workspace, cascadeId, text, modelUid || workspace.gpi?.selectedModelUid, targetId);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
       const error = result?.data?.message || result?.error || undefined;
       res.json({ ok: result.ok, error, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
@@ -546,9 +547,9 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/cdp/new-chat', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    const { targetId } = req.body;
+    const { targetId, modelUid } = req.body;
     try {
-      const result = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid, targetId);
+      const result = await gpiStartCascade(workspace, modelUid || workspace.gpi?.selectedModelUid, targetId);
       if (result.ok && result.data?.cascadeId) {
         const update = {
           'gpi.activeCascadeId': result.data.cascadeId,
