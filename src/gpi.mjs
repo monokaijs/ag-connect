@@ -421,8 +421,13 @@ async function gpiEval(workspace, expression) {
   if (!result.ok) return result;
   const val = pickBest(result.results);
 
-  if (val?.error === 'no_csrf') {
-    console.log('[GPI] CSRF missing, auto-bootstrapping...');
+  const needsRebootstrap = val?.error === 'no_csrf'
+    || val?.status === 401
+    || val?.data?.code === 'unauthenticated';
+
+  if (needsRebootstrap) {
+    const reason = val?.error === 'no_csrf' ? 'missing' : 'stale';
+    console.log(`[GPI] CSRF ${reason}, auto-bootstrapping...`);
     const bootstrap = await gpiBootstrap(workspace);
     if (bootstrap?.csrf) {
       const retry = await evalForWorkspace(workspace, expression, {
@@ -439,6 +444,12 @@ async function gpiEval(workspace, expression) {
 }
 
 export async function gpiBootstrap(workspace) {
+  await evalForWorkspace(workspace, 'window.__gpiCsrf = null', {
+    target: 'workbench',
+    timeout: 5000,
+    allTargets: true,
+  }).catch(() => { });
+
   const result = await evalForWorkspace(workspace, buildBootstrapExpr(), {
     target: 'workbench',
     timeout: 20000,
