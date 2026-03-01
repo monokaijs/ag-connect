@@ -167,11 +167,11 @@ export function useAgConnect(workspace, ws, activeTargetId) {
           const currentTarget = activeTargetRef.current;
           if (payloadTarget && currentTarget && payloadTarget !== currentTarget) return;
           if (!payloadTarget && currentTarget) return;
-          setItems(msg.payload.items || []);
-          setStatusText(msg.payload.statusText || '');
-          setIsBusy(!!msg.payload.isBusy);
-          setHasAcceptAll(!!msg.payload.hasAcceptAll);
-          setHasRejectAll(!!msg.payload.hasRejectAll);
+          if (msg.payload.items) setItems(msg.payload.items);
+          if ('statusText' in msg.payload) setStatusText(msg.payload.statusText || '');
+          if ('isBusy' in msg.payload) setIsBusy(!!msg.payload.isBusy);
+          if ('hasAcceptAll' in msg.payload) setHasAcceptAll(!!msg.payload.hasAcceptAll);
+          if ('hasRejectAll' in msg.payload) setHasRejectAll(!!msg.payload.hasRejectAll);
         }
         if (msg.event === 'targets:update' && msg.payload?.id === workspaceId) {
           setTargets(msg.payload.targets || []);
