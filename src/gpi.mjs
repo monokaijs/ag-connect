@@ -1,7 +1,7 @@
 import { cdpEvalOnPort, cdpEvalOnAllTargets, getTargetsOnPort, connectAndEval } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
 import { DEFAULT_MODEL_UID } from './config.mjs';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -695,11 +695,69 @@ function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
   });
 }
 
+function startStreamConnection(containerId, lsUrl, csrf, cascadeId, state) {
+  const json = JSON.stringify({ protocolVersion: 1, id: cascadeId, subscriberId: 'ag-connect' });
+  const len = Buffer.byteLength(json);
+  const envelope = Buffer.alloc(5 + len);
+  envelope[0] = 0;
+  envelope.writeUInt32BE(len, 1);
+  envelope.write(json, 5);
+  const tmpFile = `/tmp/gpi_stream_${cascadeId.slice(0, 8)}`;
+
+  const writeEnvelope = spawn('docker', [
+    'exec', '-i', containerId, 'bash', '-c',
+    `cat > ${tmpFile} && curl -sk "${lsUrl}${LS_PREFIX}/StreamCascadeReactiveUpdates" -H "content-type: application/connect+json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" --data-binary @${tmpFile} -N 2>/dev/null`
+  ]);
+
+  writeEnvelope.stdin.write(envelope);
+  writeEnvelope.stdin.end();
+
+  let pending = false;
+  const fetchAndCache = async () => {
+    if (pending || !state._watcherRunning) return;
+    pending = true;
+    try {
+      const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId });
+      if (data?.trajectory) {
+        const steps = data.trajectory.steps || [];
+        const last = steps[steps.length - 1];
+        const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
+        state.data = data;
+        state.isBusy = busy;
+        state.ts = Date.now();
+        state.status = busy ? 'busy' : 'idle';
+      }
+    } catch { }
+    pending = false;
+  };
+
+  fetchAndCache();
+
+  writeEnvelope.stdout.on('data', () => {
+    fetchAndCache();
+  });
+
+  writeEnvelope.on('close', () => {
+    console.log(`[GPI] Stream closed for cascade ${cascadeId.slice(0, 8)}`);
+    fetchAndCache();
+  });
+
+  writeEnvelope.on('error', () => { });
+
+  state._streamProcess = writeEnvelope;
+  return writeEnvelope;
+}
+
 export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
   const key = `${workspace._id}:${targetId || 'global'}`;
   const existing = cascadeCache.get(key);
   if (existing?._watcherRunning && existing?.cascadeId === cascadeId) return { ok: true, already: true };
-  if (existing) existing._watcherRunning = false;
+  if (existing) {
+    existing._watcherRunning = false;
+    if (existing._streamProcess) {
+      try { existing._streamProcess.kill(); } catch { }
+    }
+  }
 
   const containerId = workspace.containerId;
   if (!containerId) {
@@ -715,31 +773,12 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
     return { ok: false, error: 'no_csrf_or_ls' };
   }
 
-  console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)} via docker exec`);
+  console.log(`[GPI] Starting stream watcher for cascade ${cascadeId.slice(0, 8)} on ${lsUrl}`);
 
   const state = { _watcherRunning: true, cascadeId, isBusy: false, ts: 0 };
   cascadeCache.set(key, state);
 
-  const poll = async () => {
-    while (state._watcherRunning) {
-      try {
-        const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId: state.cascadeId });
-        if (data?.trajectory) {
-          const steps = data.trajectory.steps || [];
-          const last = steps[steps.length - 1];
-          const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
-          state.data = data;
-          state.isBusy = busy;
-          state.ts = Date.now();
-          state.status = busy ? 'busy' : 'idle';
-        }
-      } catch { }
-      const delay = state.isBusy ? 500 : 2000;
-      await new Promise(r => setTimeout(r, delay));
-    }
-  };
-
-  poll().catch(() => { state._watcherRunning = false; });
+  startStreamConnection(containerId, lsUrl, csrf, cascadeId, state);
   return { ok: true };
 }
 
