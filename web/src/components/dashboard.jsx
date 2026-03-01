@@ -234,6 +234,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const handleFileOpen = (fullPath) => {
     if (!fullPath || !setEditingFile) return;
     setEditingFile(fullPath);
+    if (isMobile && showHostPanel) setShowHostPanel(false);
   };
 
   useEffect(() => {
