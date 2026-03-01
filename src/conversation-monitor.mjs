@@ -227,6 +227,7 @@ class WorkspaceMonitor {
           for (const [tid, tcid] of targetCascades) {
             if (tcid === cascadeId) {
               dbUpdate[`targetConversations.${tid}`] = payload;
+              console.log(`[Monitor] Broadcasting target ${tid.slice(0, 8)} items=${payload.items?.length} busy=${payload.isBusy}`);
               this.broadcast({
                 event: 'conversation:update',
                 payload: { id: this.wsId, targetId: tid, ...payload },
