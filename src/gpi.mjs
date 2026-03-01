@@ -22,7 +22,7 @@ async function discoverCsrfViaDocker(containerId) {
 
     const container = docker.getContainer(containerId);
     const exec = await container.exec({
-      Cmd: ['bash', '-c', 'ps aux | grep language_server'],
+      Cmd: ['bash', '-c', 'ps aux | grep language_server | grep -v grep'],
       AttachStdout: true,
       AttachStderr: true,
     });
@@ -35,15 +35,25 @@ async function discoverCsrfViaDocker(containerId) {
       setTimeout(() => resolve(data), 3000);
     });
 
-    const csrfMatch = output.match(/--csrf_token\s+([a-f0-9-]+)/);
-    const portMatch = output.match(/--extension_server_port\s+(\d+)/);
+    const lines = output.split('\n').filter(l => l.includes('--csrf_token'));
+    const candidates = [];
+    for (const line of lines) {
+      const cm = line.match(/--csrf_token\s+([a-f0-9-]+)/);
+      const ecm = line.match(/--extension_server_csrf_token\s+([a-f0-9-]+)/);
+      const epm = line.match(/--extension_server_port\s+(\d+)/);
+      if (cm) {
+        candidates.push({
+          csrf: cm[1],
+          extensionCsrf: ecm ? ecm[1] : null,
+          extensionPort: epm ? parseInt(epm[1]) : null,
+        });
+      }
+    }
 
-    if (!csrfMatch) return null;
+    if (candidates.length === 0) return null;
 
-    return {
-      csrf: csrfMatch[1],
-      extensionPort: portMatch ? parseInt(portMatch[1]) : null,
-    };
+    console.log(`[GPI] Docker: ${candidates.length} LS procs: ${candidates.map(c => c.csrf.substring(0, 8) + '/' + (c.extensionCsrf?.substring(0, 8) || '?') + ':' + (c.extensionPort || '?')).join(', ')}`);
+    return { candidates, csrf: candidates[candidates.length - 1].csrf };
   } catch (err) {
     console.error('[GPI] Docker exec failed:', err.message);
     return null;
@@ -580,20 +590,73 @@ export async function gpiBootstrap(workspace) {
     }
   } else {
     const discovery = await discoverCsrfViaDocker(workspace.containerId);
-    if (discovery?.csrf) {
+    if (discovery?.candidates?.length) {
       const lsUrl = await discoverLsUrl(workspace);
       const port = workspace.cdpPort || workspace.ports?.debug;
-      await cdpEvalOnAllTargets(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
+
+      const allTokens = [];
+      for (const c of discovery.candidates) {
+        allTokens.push(c.csrf);
+        if (c.extensionCsrf) allTokens.push(c.extensionCsrf);
+      }
+      const uniqueTokens = [...new Set(allTokens)];
+      console.log(`[GPI] Trying ${uniqueTokens.length} tokens against lsUrl=${lsUrl}`);
+
+      const validateExpr = `(async () => {
+        try {
+          const perf = performance.getEntriesByType('resource');
+          let lsUrl = null;
+          for (let i = perf.length - 1; i >= 0; i--) {
+            if (perf[i].name.includes('LanguageServerService')) {
+              lsUrl = new URL(perf[i].name).origin;
+              break;
+            }
+          }
+          if (!lsUrl) return { ok: false, error: 'no_ls' };
+          const origFetch = window.__origFetch || window.fetch;
+          const tokens = ${JSON.stringify(uniqueTokens)};
+          for (const token of tokens) {
+            try {
+              const res = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': token },
+                body: '{}',
+              });
+              if (res.status === 200) {
+                window.__gpiCsrf = token;
+                return { ok: true, csrf: token, lsUrl };
+              }
+            } catch {}
+          }
+          if (window.__gpiCsrf) return { ok: true, csrf: window.__gpiCsrf, source: 'intercepted' };
+          return { ok: false, error: 'all_tokens_invalid', tried: tokens.length };
+        } catch(e) {
+          return { ok: false, error: e.message };
+        }
+      })()`;
+
+      const valResult = await cdpEvalOnPort(port, validateExpr, {
+        target: 'workbench',
         host: workspace.cdpHost,
-        timeout: 5000,
+        timeout: 20000,
       });
-      return {
-        ok: true,
-        csrf: discovery.csrf,
-        lsUrl,
-        hasCsrf: true,
-        installed: true,
-      };
+      const valBest = valResult.results?.find(r => r.value?.ok)?.value
+        || valResult.results?.[0]?.value;
+      console.log(`[GPI] Docker CSRF validation: ${JSON.stringify(valBest).substring(0, 300)}`);
+
+      if (valBest?.ok && valBest?.csrf) {
+        await cdpEvalOnAllTargets(port, `window.__gpiCsrf = ${JSON.stringify(valBest.csrf)}`, {
+          host: workspace.cdpHost,
+          timeout: 5000,
+        });
+        return {
+          ok: true,
+          csrf: valBest.csrf,
+          lsUrl,
+          hasCsrf: true,
+          installed: true,
+        };
+      }
     }
   }
 
