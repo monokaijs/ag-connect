@@ -1,5 +1,6 @@
-import { cdpEvalOnPort } from './workspace-cdp.mjs';
+import { cdpEvalOnPort, cdpEvalOnAllTargets } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
+import { DEFAULT_MODEL_UID } from './config.mjs';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -127,13 +128,14 @@ function buildFetchExpr(endpoint, body) {
 }
 
 function buildSendExpr(cascadeId, message, model) {
+  const requestedModel = { model: model || DEFAULT_MODEL_UID };
   const body = {
     cascadeId,
     items: [{ text: message }],
     metadata: {
       ideName: 'antigravity',
       locale: 'en',
-      ideVersion: '1.15.8',
+      ideVersion: '1.19.6',
       extensionName: 'antigravity',
     },
     cascadeConfig: {
@@ -157,11 +159,15 @@ function buildSendExpr(cascadeId, message, model) {
             artifactReviewMode: 'ARTIFACT_REVIEW_MODE_ALWAYS',
           },
         },
+        requestedModel,
+      },
+      conversationHistoryConfig: {
+        enabled: true,
       },
     },
+    clientType: 'CHAT_CLIENT_REQUEST_STREAM_CLIENT_TYPE_IDE',
   };
 
-  const modelJson = model ? JSON.stringify(model) : null;
   return `(async () => {
     try {
       const perf = performance.getEntriesByType('resource');
@@ -177,16 +183,9 @@ function buildSendExpr(cascadeId, message, model) {
       const csrf = window.__gpiCsrf;
       if (!csrf) return { ok: false, error: 'no_csrf' };
 
-      const requestBody = ${JSON.stringify(JSON.stringify(body))};
-      const parsed = JSON.parse(requestBody);
-      const modelId = ${modelJson ? `${modelJson}` : 'null'} || window.__gpiModelUid;
-      if (modelId) {
-        parsed.cascadeConfig = parsed.cascadeConfig || {};
-        if (!parsed.cascadeConfig.planModel) parsed.cascadeConfig.planModel = modelId;
-        if (!parsed.cascadeConfig.requestedModelUid) parsed.cascadeConfig.requestedModelUid = modelId;
-      }
-
       const origFetch = window.__origFetch || window.fetch;
+      const parsed = JSON.parse(${JSON.stringify(JSON.stringify(body))});
+
       const res = await origFetch(lsUrl + '${LS_PREFIX}/SendUserCascadeMessage', {
         method: 'POST',
         headers: {
@@ -227,12 +226,16 @@ function buildBootstrapExpr() {
             const h = opts.headers || {};
             const c = h['x-codeium-csrf-token'];
             if (c) window.__gpiCsrf = c;
-            if (url.includes('SendUserCascadeMessage') && opts.body) {
-              try {
-                const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
-                const uid = b?.cascadeConfig?.plannerConfig?.requestedModelUid;
-                if (uid) window.__gpiModelUid = uid;
-              } catch {}
+            if (url.includes('SendUserCascadeMessage') || url.includes('StartCascade')) {
+              if (opts.body) {
+                try {
+                  const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+                  const uid = b?.cascadeConfig?.plannerConfig?.requestedModel?.model
+                    || b?.cascadeConfig?.plannerConfig?.requestedModelUid
+                    || b?.cascadeConfig?.requestedModelUid;
+                  if (uid) window.__gpiModelUid = uid;
+                } catch {}
+              }
             }
           }
           return origFetch.apply(this, args);
@@ -290,11 +293,12 @@ function buildGetAllTrajectoriesExpr() {
 }
 
 function buildStartCascadeExpr(modelUid) {
+  const requestedModel = { model: modelUid || DEFAULT_MODEL_UID };
   const body = {
     metadata: {
       ideName: 'antigravity',
       locale: 'en',
-      ideVersion: '1.15.8',
+      ideVersion: '1.19.6',
       extensionName: 'antigravity',
     },
     cascadeConfig: {
@@ -318,14 +322,14 @@ function buildStartCascadeExpr(modelUid) {
             artifactReviewMode: 'ARTIFACT_REVIEW_MODE_ALWAYS',
           },
         },
+        requestedModel,
+      },
+      conversationHistoryConfig: {
+        enabled: true,
       },
     },
+    clientType: 'CHAT_CLIENT_REQUEST_STREAM_CLIENT_TYPE_IDE',
   };
-
-  if (modelUid) {
-    body.cascadeConfig.planModel = modelUid;
-    body.cascadeConfig.requestedModelUid = modelUid;
-  }
 
   return buildFetchExpr('StartCascade', body);
 }
@@ -388,6 +392,12 @@ async function evalForWorkspace(workspace, expression, opts = {}) {
   }
   const port = workspace.cdpPort || workspace.ports?.debug;
   if (!port) return { ok: false, error: 'no_debug_port' };
+  if (opts.allTargets) {
+    return cdpEvalOnAllTargets(port, expression, {
+      host: workspace.cdpHost,
+      timeout: opts.timeout || 15000,
+    });
+  }
   return cdpEvalOnPort(port, expression, {
     target: opts.target || 'workbench',
     host: workspace.cdpHost,
@@ -432,6 +442,7 @@ export async function gpiBootstrap(workspace) {
   const result = await evalForWorkspace(workspace, buildBootstrapExpr(), {
     target: 'workbench',
     timeout: 20000,
+    allTargets: true,
   });
 
   const hasCsrf = result.results?.some(r => r.value?.csrf);
@@ -467,8 +478,7 @@ export async function gpiBootstrap(workspace) {
     if (discovery?.csrf) {
       const lsUrl = await discoverLsUrl(workspace);
       const port = workspace.cdpPort || workspace.ports?.debug;
-      await cdpEvalOnPort(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
-        target: 'workbench',
+      await cdpEvalOnAllTargets(port, `window.__gpiCsrf = ${JSON.stringify(discovery.csrf)}`, {
         host: workspace.cdpHost,
         timeout: 5000,
       });
@@ -666,7 +676,7 @@ function parseTrajectoryItems(trajectory) {
       case 'CORTEX_STEP_TYPE_USER_INPUT': {
         const ui = step.userInput || {};
         const query = ui.query || ui.items?.[0]?.text || '';
-        if (query) items.push({ type: 'user', text: query.substring(0, 2000) });
+        if (query) items.push({ type: 'user', text: query });
         break;
       }
       case 'CORTEX_STEP_TYPE_PLANNER_RESPONSE': {
@@ -686,8 +696,8 @@ function parseTrajectoryItems(trajectory) {
         if (step.plannerResponse?.response) {
           items.push({
             type: 'markdown',
-            text: step.plannerResponse.response.substring(0, 3000),
-            html: step.plannerResponse.response.substring(0, 10000),
+            text: step.plannerResponse.response,
+            html: step.plannerResponse.response,
           });
         }
         break;
@@ -1005,13 +1015,19 @@ export function trajectoryToConversation(trajectoryData) {
     statusText = lastStep?.type === 'CORTEX_STEP_TYPE_PLANNER_RESPONSE' ? 'Generating' : 'Working';
   }
 
+  const turnCount = items.length;
+  const lastItem = items[items.length - 1];
+  const lastText = lastItem?.text || lastItem?.html || lastItem?.code || '';
+  const hash = `${turnCount}:${isBusy}:${hasAcceptAll}:${hasAcceptAll}:${statusText}:${items.length}:${lastText.length}`;
+
   return {
-    turnCount: items.length,
+    turnCount,
     items,
     statusText,
     isBusy,
     hasAcceptAll,
     hasRejectAll: hasAcceptAll,
+    hash,
     cascadeId: trajectory.cascadeId,
     trajectoryId: trajectory.trajectoryId,
   };

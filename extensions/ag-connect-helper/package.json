@@ -1,0 +1,14 @@
+{
+  "name": "ag-connect-helper",
+  "displayName": "AG Connect Helper",
+  "publisher": "ag-connect",
+  "description": "Helper extension for AG Connect workspace management",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^0.10.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./extension.js"
+}

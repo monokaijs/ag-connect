@@ -5,7 +5,8 @@ import {
   gpiGetAllTrajectories,
   trajectoryToConversation,
 } from './gpi.mjs';
-import { getTargetsOnPort } from './workspace-cdp.mjs';
+import { getTargetsOnPort, getTargetWorkspaceFolders, connectAndEval, FOLDER_EXPR } from './workspace-cdp.mjs';
+import { cliGetTargets, cliCdpEval } from './cli-ws.mjs';
 import { sendPushNotification } from './push.mjs';
 
 const activeMonitors = new Map();
@@ -73,6 +74,8 @@ class WorkspaceMonitor {
       const ws = await Workspace.findById(this.wsId).catch(() => null);
       if (ws) this.workspace = ws;
 
+      await this.pollTargets();
+
       const allResult = await gpiGetAllTrajectories(this.workspace);
       if (!allResult.ok || !allResult.data) {
         if (!this._loggedFail) {
@@ -89,11 +92,26 @@ class WorkspaceMonitor {
       this._loggedFail = false;
 
       const summaries = allResult.data?.trajectorySummaries || {};
-      const entries = Object.entries(summaries);
+      let entries = Object.entries(summaries);
+
       if (entries.length === 0) {
-        this.polling = false;
-        this.schedulePoll();
-        return;
+        const knownCascades = new Set();
+        const activeCid = this.workspace.gpi?.activeCascadeId;
+        if (activeCid) knownCascades.add(activeCid);
+        const tc = this.workspace.targetCascades;
+        if (tc) {
+          for (const [, cid] of tc) {
+            if (cid) knownCascades.add(cid);
+          }
+        }
+        if (knownCascades.size === 0) {
+          this.polling = false;
+          this.schedulePoll();
+          return;
+        }
+        for (const cid of knownCascades) {
+          entries.push([cid, { status: 'unknown' }]);
+        }
       }
 
       entries.sort((a, b) => {
@@ -103,28 +121,10 @@ class WorkspaceMonitor {
       });
 
       const [cascadeId, summary] = entries[0];
-      const runStatus = summary.status;
-      const isBusyNow = runStatus === 'CASCADE_RUN_STATUS_RUNNING';
 
       if (cascadeId !== this._lastCascadeId) {
-        console.log(`[Monitor] Tracking cascade ${cascadeId.slice(0, 8)}... status=${runStatus}`);
+        console.log(`[Monitor] Tracking cascade ${cascadeId.slice(0, 8)}... status=${summary.status || 'unknown'}`);
         this._lastCascadeId = cascadeId;
-      }
-
-      const wasBusy = this.isBusy;
-      this.isBusy = isBusyNow;
-
-      if (wasBusy !== isBusyNow) {
-        console.log(`[Monitor] ${this.wsId} busy: ${wasBusy} → ${isBusyNow} (${runStatus})`);
-      }
-
-      if (wasBusy && !isBusyNow) {
-        const wsName = this.workspace.name || 'Workspace';
-        console.log(`[Monitor] Triggering push for ${wsName}`);
-        sendPushNotification(
-          `${wsName} — Task Complete`,
-          'The agent has finished processing your message.'
-        );
       }
 
       const result = await gpiGetTrajectory(this.workspace, cascadeId);
@@ -136,7 +136,23 @@ class WorkspaceMonitor {
 
       const data = trajectoryToConversation(result.data);
 
-      const hash = `${data.turnCount}:${data.isBusy}:${data.hasAcceptAll}:${data.hasRejectAll}:${data.statusText}:${data.items.length}`;
+      const wasBusy = this.isBusy;
+      this.isBusy = data.isBusy;
+
+      if (wasBusy !== data.isBusy) {
+        console.log(`[Monitor] ${this.wsId} busy: ${wasBusy} → ${data.isBusy}`);
+      }
+
+      if (wasBusy && !data.isBusy) {
+        const wsName = this.workspace.name || 'Workspace';
+        console.log(`[Monitor] Triggering push for ${wsName}`);
+        sendPushNotification(
+          `${wsName} — Task Complete`,
+          'The agent has finished processing your message.'
+        );
+      }
+
+      const hash = data.hash;
       const prev = lastHash.get(this.wsId);
 
       if (!prev || prev !== hash) {
@@ -152,10 +168,25 @@ class WorkspaceMonitor {
           updatedAt: new Date(),
         };
 
-        await Workspace.findByIdAndUpdate(this.wsId, {
+        const dbUpdate = {
           conversation: payload,
           'gpi.activeCascadeId': cascadeId,
-        });
+        };
+
+        const targetCascades = this.workspace.targetCascades;
+        if (targetCascades) {
+          for (const [tid, tcid] of targetCascades) {
+            if (tcid === cascadeId) {
+              dbUpdate[`targetConversations.${tid}`] = payload;
+              this.broadcast({
+                event: 'conversation:update',
+                payload: { id: this.wsId, targetId: tid, ...payload },
+              });
+            }
+          }
+        }
+
+        await Workspace.findByIdAndUpdate(this.wsId, dbUpdate);
 
         this.broadcast({
           event: 'conversation:update',
@@ -163,9 +194,40 @@ class WorkspaceMonitor {
         });
       }
 
-      if (this._pollCount % 3 === 0 || !this._lastTargetHash) {
-        await this.pollTargets();
+      const targetCascades = this.workspace.targetCascades;
+      if (targetCascades && targetCascades.size > 0) {
+        for (const [tid, tcid] of targetCascades) {
+          if (tcid === cascadeId) continue;
+          try {
+            const tResult = await gpiGetTrajectory(this.workspace, tcid);
+            if (!tResult.ok) continue;
+            const tData = trajectoryToConversation(tResult.data);
+            const tHash = `${tData.turnCount}:${tData.isBusy}:${tData.items.length}`;
+            const prevTHash = lastHash.get(`${this.wsId}:${tid}`);
+            if (prevTHash !== tHash) {
+              lastHash.set(`${this.wsId}:${tid}`, tHash);
+              const tPayload = {
+                items: tData.items,
+                statusText: tData.statusText,
+                isBusy: tData.isBusy,
+                turnCount: tData.turnCount,
+                hasAcceptAll: tData.hasAcceptAll,
+                hasRejectAll: tData.hasRejectAll,
+                updatedAt: new Date(),
+              };
+              await Workspace.findByIdAndUpdate(this.wsId, {
+                [`targetConversations.${tid}`]: tPayload,
+              });
+              this.broadcast({
+                event: 'conversation:update',
+                payload: { id: this.wsId, targetId: tid, ...tPayload },
+              });
+            }
+          } catch { }
+        }
       }
+
+
     } catch (err) {
       console.error(`[Monitor] Poll error [${this.wsId}]:`, err.message);
     }
@@ -176,19 +238,70 @@ class WorkspaceMonitor {
 
   async pollTargets() {
     try {
+      let targets = [];
       const port = this.workspace.cdpPort || this.workspace.ports?.debug;
-      if (!port) return;
-      const targets = await getTargetsOnPort(port, this.workspace.cdpHost);
+      if (this.workspace.type === 'cli') {
+        targets = await cliGetTargets(this.wsId);
+      } else {
+        if (!port) return;
+        targets = await getTargetsOnPort(port, this.workspace.cdpHost);
+      }
+
       const filtered = targets
-        .filter(t => t.type === 'page')
-        .map(t => ({ id: t.id, title: t.title, url: t.url }));
-      const hash = filtered.map(t => t.id).sort().join(',');
-      if (hash !== this._lastTargetHash) {
-        this._lastTargetHash = hash;
+        .filter(t => t.type === 'page' || t.type === 'app')
+        .filter(t => {
+          const title = (t.title || '').toLowerCase();
+          const url = (t.url || '').toLowerCase();
+          if (title.includes('launchpad') || url.includes('launchpad')) return false;
+          if (url.includes('jetski-agent') || url.includes('workbench-jetski')) return false;
+          return true;
+        })
+        .map(t => ({ id: t.id, title: t.title, url: t.url, type: t.type, wsUrl: t.wsUrl }));
+
+      const idHash = filtered.map(t => t.id).sort().join(',');
+      const idsChanged = idHash !== this._lastTargetIdHash;
+      this._lastTargetIdHash = idHash;
+
+      if (idsChanged) {
+        const stripped = filtered.map(({ wsUrl, ...rest }) => rest);
         this.broadcast({
           event: 'targets:update',
-          payload: { id: this.wsId, targets: filtered },
+          payload: { id: this.wsId, targets: stripped },
         });
+        console.log(`[Monitor] targets:update (ids changed) for ${this.wsId} - ${filtered.length} targets`);
+      }
+
+      try {
+        if (this.workspace.type === 'cli') {
+          const result = await cliCdpEval(this.wsId, FOLDER_EXPR, { timeout: 5000 });
+          const val = result?.results?.[0]?.value || result?.value;
+          if (val && filtered.length > 0) {
+            filtered[0].folder = val;
+          }
+        } else {
+          const workbenchTargets = filtered.filter(t =>
+            t.url?.includes('workbench') && t.wsUrl
+          );
+          await Promise.all(workbenchTargets.map(async (t) => {
+            try {
+              const r = await connectAndEval(t.wsUrl, FOLDER_EXPR, 3000);
+              if (r.length > 0 && r[0].value) {
+                t.folder = r[0].value;
+              }
+            } catch { }
+          }));
+        }
+      } catch { }
+
+      const fullHash = filtered.map(t => `${t.id}:${t.title}:${t.folder || ''}`).sort().join(',');
+      if (fullHash !== this._lastTargetHash) {
+        this._lastTargetHash = fullHash;
+        const stripped = filtered.map(({ wsUrl, ...rest }) => rest);
+        this.broadcast({
+          event: 'targets:update',
+          payload: { id: this.wsId, targets: stripped },
+        });
+        console.log(`[Monitor] targets:update (full) for ${this.wsId} - ${filtered.length} targets`);
       }
     } catch { }
   }
@@ -203,6 +316,7 @@ function startConversationMonitor(broadcast) {
   setInterval(async () => {
     try {
       const workspaces = await Workspace.find({ status: 'running' });
+      console.log(`Monitor loop: found ${workspaces.length} running workspaces`);
       const runningIds = new Set(workspaces.map(w => w._id.toString()));
 
       for (const [id, monitor] of activeMonitors) {
@@ -213,11 +327,13 @@ function startConversationMonitor(broadcast) {
 
       for (const ws of workspaces) {
         const id = ws._id.toString();
-        if (!activeMonitors.has(id) && ws.ports?.debug) {
+        if (!activeMonitors.has(id) && (ws.ports?.debug || ws.type === 'cli')) {
           activeMonitors.set(id, new WorkspaceMonitor(ws, broadcast));
         }
       }
-    } catch { }
+    } catch (err) {
+      console.log("Monitor loop error:", err);
+    }
   }, 2000);
 }
 

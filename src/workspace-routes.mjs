@@ -16,10 +16,11 @@ import {
   startCliWorkspace,
 } from './cli-manager.mjs';
 import { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort } from './workspace-cdp.mjs';
-import { cliCdpEval, cliGetTargets, cliCdpScreenshot } from './cli-ws.mjs';
+import { cliCdpEval, cliGetTargets, cliCdpScreenshot, cliExec } from './cli-ws.mjs';
 
 import { fetchWorkspaceQuota } from './quota.mjs';
 import { SshKey } from './models/ssh-key.mjs';
+import { getSettings } from './models/settings.mjs';
 import {
   gpiBootstrap,
   gpiSendMessage,
@@ -27,9 +28,9 @@ import {
   gpiGetAllTrajectories,
   gpiStartCascade,
   gpiCancelInvocation,
-  gpiGetModels,
-  gpiDiscoverModelUid,
+  trajectoryToConversation,
 } from './gpi.mjs';
+import { MODELS, getCachedQuota, setCachedQuota, getAllCachedQuotas } from './config.mjs';
 
 const HOST_BASE = process.env.HOST_BASE_PATH || '';
 const HOST_MOUNT = process.env.HOST_MOUNT_POINT || '';
@@ -57,10 +58,17 @@ async function wsEval(workspace, expression, opts = {}) {
 function setupWorkspaceRoutes(app, broadcast) {
   app.get('/api/system/ls', async (req, res) => {
     try {
-      const defaultPath = HOST_BASE ? HOST_BASE : os.homedir();
+      const settings = await getSettings();
+      const isDocker = !!(HOST_BASE && HOST_MOUNT);
+      const globalMount = isDocker ? (settings.hostMountPath || '') : '';
+      const defaultPath = globalMount || (HOST_BASE ? HOST_BASE : os.homedir());
       let hostPath = req.query.path || defaultPath;
       if (hostPath.startsWith('~')) {
         hostPath = path.join(defaultPath, hostPath.slice(1));
+      }
+
+      if (globalMount && !hostPath.startsWith(globalMount)) {
+        hostPath = globalMount;
       }
 
       const localPath = toLocalPath(hostPath);
@@ -72,7 +80,8 @@ function setupWorkspaceRoutes(app, broadcast) {
       const entries = await fs.readdir(localPath, { withFileTypes: true });
       const folders = [];
 
-      if (path.dirname(hostPath) !== hostPath) {
+      const canGoUp = path.dirname(hostPath) !== hostPath && (!globalMount || path.dirname(hostPath).startsWith(globalMount));
+      if (canGoUp) {
         folders.push({
           name: '..',
           path: path.dirname(hostPath),
@@ -94,7 +103,59 @@ function setupWorkspaceRoutes(app, broadcast) {
         return a.name.localeCompare(b.name);
       });
 
-      res.json({ path: hostPath, folders });
+      res.json({ path: hostPath, folders, hostMountPath: globalMount });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/workspaces/:id/ls', async (req, res) => {
+    try {
+      const workspace = await Workspace.findById(req.params.id);
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+
+      if (workspace.type === 'cli') {
+        const targetPath = req.query.path || '';
+        const b64 = targetPath ? Buffer.from(targetPath).toString('base64') : '';
+        const pathExpr = b64 ? `Buffer.from('${b64}','base64').toString()` : `require('os').homedir()`;
+        const script = `node -e "var p=require('path'),fs=require('fs'),t=${pathExpr};if(!fs.statSync(t).isDirectory()){process.exit(1)}var e=fs.readdirSync(t,{withFileTypes:true});var d=p.dirname(t);var r={path:t,folders:[]};if(d!==t)r.folders.push({name:'..',path:d});e.forEach(function(x){if(x.isDirectory()&&!x.name.startsWith('.'))r.folders.push({name:x.name,path:p.join(t,x.name)})});r.folders.sort(function(a,b){return a.name==='..'?-1:b.name==='..'?1:a.name.localeCompare(b.name)});console.log(JSON.stringify(r))"`;
+        const output = await cliExec(workspace._id.toString(), script, 10000);
+        const data = JSON.parse(output.trim());
+        return res.json(data);
+      }
+
+      const settings = await getSettings();
+      const globalMount = settings.hostMountPath || '';
+      const defaultPath = globalMount || (HOST_BASE ? HOST_BASE : os.homedir());
+      let hostPath = req.query.path || defaultPath;
+      if (hostPath.startsWith('~')) {
+        hostPath = path.join(defaultPath, hostPath.slice(1));
+      }
+      if (globalMount && !hostPath.startsWith(globalMount)) {
+        hostPath = globalMount;
+      }
+      const localPath = toLocalPath(hostPath);
+      const stat = await fs.stat(localPath);
+      if (!stat.isDirectory()) {
+        return res.status(400).json({ error: 'Not a directory' });
+      }
+      const entries = await fs.readdir(localPath, { withFileTypes: true });
+      const folders = [];
+      const canGoUp = path.dirname(hostPath) !== hostPath && (!globalMount || path.dirname(hostPath).startsWith(globalMount));
+      if (canGoUp) {
+        folders.push({ name: '..', path: path.dirname(hostPath) });
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          folders.push({ name: entry.name, path: path.join(hostPath, entry.name) });
+        }
+      }
+      folders.sort((a, b) => {
+        if (a.name === '..') return -1;
+        if (b.name === '..') return 1;
+        return a.name.localeCompare(b.name);
+      });
+      res.json({ path: hostPath, folders, hostMountPath: globalMount });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -149,33 +210,14 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
 
-    let requireRestart = false;
     if (req.body.name !== undefined) workspace.name = req.body.name;
     if (req.body.icon !== undefined) workspace.icon = req.body.icon;
     if (req.body.color !== undefined) workspace.color = req.body.color;
-    if (req.body.mountedPath !== undefined) {
-      if (workspace.mountedPath !== req.body.mountedPath) {
-        requireRestart = true;
-      }
-      workspace.mountedPath = req.body.mountedPath;
-    }
+    if (req.body.mountedPath !== undefined) workspace.mountedPath = req.body.mountedPath;
 
     await workspace.save();
     broadcast({ event: 'workspace:updated', payload: workspace.toJSON() });
     res.json(workspace);
-
-    if (requireRestart && workspace.status === 'running') {
-      broadcast({ event: 'workspace:status', payload: { id: workspace._id, status: 'initializing', stage: 'Re-mounting', message: 'Applying new mount path...' } });
-      setTimeout(async () => {
-        try {
-          if (workspace.type === 'cli') {
-            await startCliWorkspace(workspace, broadcast);
-          } else {
-            await startWorkspaceContainer(workspace, broadcast);
-          }
-        } catch (e) { console.error(e); }
-      }, 0);
-    }
   });
 
   app.get('/api/workspaces/:id/fs/list', async (req, res) => {
@@ -184,8 +226,9 @@ function setupWorkspaceRoutes(app, broadcast) {
       if (!workspace) return res.json([]);
       const sub = req.query.path || '';
 
-      if (workspace.mountedPath) {
-        const base = toLocalPath(workspace.mountedPath);
+      const mountPath = workspace.mountedPath || (await getSettings()).hostMountPath || '';
+      if (mountPath) {
+        const base = toLocalPath(mountPath);
         const target = path.join(base, sub);
         if (!target.startsWith(base)) return res.status(403).json({ error: 'Out of bounds' });
         const stats = await fs.stat(target).catch(() => null);
@@ -217,8 +260,10 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.get('/api/workspaces/:id/fs/read', async (req, res) => {
     try {
       const workspace = await Workspace.findById(req.params.id);
-      if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const base = toLocalPath(workspace.mountedPath);
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      const mountPath = workspace.mountedPath || (await getSettings()).hostMountPath || '';
+      if (!mountPath) return res.status(404).json({ error: 'No mount' });
+      const base = toLocalPath(mountPath);
       const sub = req.query.path;
       if (!sub) return res.status(400).json({ error: 'Path required' });
       const target = path.join(base, sub);
@@ -234,8 +279,10 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/fs/write', async (req, res) => {
     try {
       const workspace = await Workspace.findById(req.params.id);
-      if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const base = toLocalPath(workspace.mountedPath);
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      const mountPath = workspace.mountedPath || (await getSettings()).hostMountPath || '';
+      if (!mountPath) return res.status(404).json({ error: 'No mount' });
+      const base = toLocalPath(mountPath);
       const sub = req.body.path;
       const content = req.body.content;
       if (!sub || content === undefined) return res.status(400).json({ error: 'Path and content required' });
@@ -252,8 +299,10 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/fs/delete', async (req, res) => {
     try {
       const workspace = await Workspace.findById(req.params.id);
-      if (!workspace || !workspace.mountedPath) return res.status(404).json({ error: 'No mount' });
-      const base = toLocalPath(workspace.mountedPath);
+      if (!workspace) return res.status(404).json({ error: 'Not found' });
+      const mountPath = workspace.mountedPath || (await getSettings()).hostMountPath || '';
+      if (!mountPath) return res.status(404).json({ error: 'No mount' });
+      const base = toLocalPath(mountPath);
       const sub = req.body.path;
       if (!sub) return res.status(400).json({ error: 'Path required' });
       const target = path.join(base, sub);
@@ -389,47 +438,31 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     const text = req.body.text;
+    const targetId = req.body.targetId;
     if (!text) return res.status(400).json({ ok: false, error: 'missing text' });
-    console.log(`[Send] Message for ${req.params.id}: "${text.substring(0, 80)}"`);
+    console.log(`[Send] Message for ${req.params.id} target=${targetId || 'global'}: "${text.substring(0, 80)}"`);
 
     try {
-      let modelUid = workspace.gpi?.selectedModelUid || undefined;
-      if (!modelUid) {
-        try {
-          const discovery = await gpiDiscoverModelUid(workspace);
-          if (discovery.ok && discovery.modelUid) {
-            modelUid = discovery.modelUid;
-            console.log(`[Send] Discovered model from IDE: ${modelUid}`);
-            await Workspace.findByIdAndUpdate(workspace._id, {
-              'gpi.selectedModelUid': modelUid,
-            });
-          } else {
-            // Default fallback if discovery fails
-            modelUid = 'models/gemini-2.5-pro';
-            console.log('[Send] Auto-discovery failed, using default model mapping.');
-          }
-        } catch (err) {
-          console.error('[Send] Model discovery error:', err.message);
-        }
-      }
+      let cascadeId = targetId
+        ? workspace.targetCascades?.get(targetId)
+        : workspace.gpi?.activeCascadeId;
 
-      let cascadeId = workspace.gpi?.activeCascadeId;
       if (!cascadeId) {
-        console.log(`[Send] No active cascade, starting new one with model: ${modelUid}...`);
-        const newChat = await gpiStartCascade(workspace, modelUid);
+        console.log(`[Send] No active cascade, starting new one...`);
+        const newChat = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid);
         console.log('[Send] StartCascade result:', JSON.stringify(newChat).substring(0, 300));
         if (newChat.ok && newChat.data?.cascadeId) {
           cascadeId = newChat.data.cascadeId;
-          await Workspace.findByIdAndUpdate(workspace._id, {
-            'gpi.activeCascadeId': cascadeId,
-          });
+          const update = { 'gpi.activeCascadeId': cascadeId };
+          if (targetId) update[`targetCascades.${targetId}`] = cascadeId;
+          await Workspace.findByIdAndUpdate(workspace._id, update);
         } else {
           return res.json({ ok: false, error: 'failed_to_create_cascade', details: newChat });
         }
       }
       console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
 
-      const result = await gpiSendMessage(workspace, cascadeId, text, modelUid);
+      const result = await gpiSendMessage(workspace, cascadeId, text, workspace.gpi?.selectedModelUid);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
       const error = result?.data?.message || result?.error || undefined;
       res.json({ ok: result.ok, error, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
@@ -455,62 +488,12 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.get('/api/workspaces/:id/cdp/models', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    try {
-      const gpiResult = await gpiGetModels(workspace);
-      let current = workspace.gpi?.selectedModel || '';
-
-      if (gpiResult.ok && gpiResult.models?.length) {
-        if (!current) {
-          const first = gpiResult.models[0];
-          current = first.label;
-          const update = { 'gpi.selectedModel': current };
-          if (first.modelUid) update['gpi.selectedModelUid'] = first.modelUid;
-          await Workspace.findByIdAndUpdate(workspace._id, update);
-        }
-        const models = gpiResult.models.map(m => ({
-          label: m.label,
-          modelUid: m.modelUid || '',
-          selected: m.label === current,
-          isPremium: m.isPremium,
-          isBeta: m.isBeta,
-          isNew: m.isNew,
-          supportsImages: m.supportsImages,
-        }));
-        return res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
-      }
-
-      const result = await wsEval(workspace, `(() => {
-        const btn = document.querySelector('span.min-w-0.select-none.overflow-hidden.text-ellipsis.whitespace-nowrap.text-xs.opacity-70');
-        const container = btn ? btn.closest('button, div[class*="cursor-"]') : null;
-        if (container) container.click();
-        return new Promise(resolve => {
-          setTimeout(() => {
-            const optionSpans = Array.from(document.querySelectorAll('span, div')).filter(s => {
-              if (s.children.length > 0) return false;
-              const t = s.textContent.trim();
-              return ['Claude', 'Gemini', 'GPT', 'Opus', 'Sonnet', 'Flash', 'Haiku', 'o1', 'o3', 'o4'].some(p => t.includes(p)) && t.length < 50;
-            });
-            const allModels = optionSpans.map(s => s.textContent.trim()).filter((m, i, arr) => arr.indexOf(m) === i);
-            if (container) document.body.click();
-            resolve({ models: allModels });
-          }, 300);
-        });
-      })()`, { target: 'workbench' });
-      const scraped = result?.results?.[0]?.value || result;
-      const allScraped = scraped?.models || [];
-      if (!current && allScraped.length) {
-        current = allScraped[0];
-        await Workspace.findByIdAndUpdate(workspace._id, { 'gpi.selectedModel': current });
-      }
-      const models = allScraped.map(m => ({
-        label: m,
-        modelUid: '',
-        selected: m === current,
-      }));
-      res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
+    const current = workspace.gpi?.selectedModel || MODELS[0].label;
+    const models = MODELS.map(m => ({
+      ...m,
+      selected: m.label === current,
+    }));
+    res.json({ ok: true, results: [{ value: { ok: true, current, models } }] });
   });
 
   app.post('/api/workspaces/:id/cdp/models/select', async (req, res) => {
@@ -563,12 +546,19 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/cdp/new-chat', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
+    const { targetId } = req.body;
     try {
       const result = await gpiStartCascade(workspace);
       if (result.ok && result.data?.cascadeId) {
-        await Workspace.findByIdAndUpdate(workspace._id, {
+        const update = {
           'gpi.activeCascadeId': result.data.cascadeId,
-        });
+          conversation: { items: [], turnCount: 0, statusText: '' },
+        };
+        if (targetId) {
+          update[`targetCascades.${targetId}`] = result.data.cascadeId;
+          update[`targetConversations.${targetId}`] = { items: [], turnCount: 0, statusText: '' };
+        }
+        await Workspace.findByIdAndUpdate(workspace._id, update);
       }
       res.json({ ok: result.ok, results: [{ value: { ok: result.ok, cascadeId: result.data?.cascadeId } }] });
     } catch (err) {
@@ -580,20 +570,56 @@ function setupWorkspaceRoutes(app, broadcast) {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     try {
+      let folderFilter = req.query.folder || '';
+
+      if (!folderFilter) {
+        try {
+          const expr = '(function(){try{return vscode.process.env.PWD||""}catch(e){return ""}})()';
+          let evalResult;
+          if (workspace.type === 'cli') {
+            evalResult = await cliCdpEval(workspace._id.toString(), expr, { target: 'workbench', timeout: 5000 });
+          } else {
+            const port = workspace.cdpPort || workspace.ports?.debug;
+            if (port) {
+              evalResult = await cdpEvalOnPort(port, expr, { target: 'workbench', timeout: 5000, host: workspace.cdpHost });
+            }
+          }
+          const val = evalResult?.results?.[0]?.value;
+          if (val) folderFilter = val;
+        } catch { }
+      }
+
       const result = await gpiGetAllTrajectories(workspace);
       if (!result.ok) return res.json({ ok: false, error: 'failed', details: result });
 
       const summaries = result.data?.trajectorySummaries || {};
-      const groups = [{ label: 'All Conversations', items: [] }];
+      const byFolder = {};
 
       for (const [cascadeId, traj] of Object.entries(summaries)) {
         const title = traj.summary || cascadeId;
         const active = cascadeId === workspace.gpi?.activeCascadeId;
         const time = traj.lastModifiedTime || traj.createdTime || '';
-        groups[0].items.push({ title, time, active, cascadeId });
+        const ws = traj.workspaces?.[0];
+        const folderUri = ws?.workspaceFolderAbsoluteUri || '';
+        const repoName = ws?.repository?.computedName || '';
+        const folderName = repoName || folderUri.split('/').filter(Boolean).pop() || 'Unknown';
+
+        if (folderFilter && folderUri && !folderUri.includes(folderFilter)) continue;
+
+        if (!byFolder[folderName]) byFolder[folderName] = [];
+        byFolder[folderName].push({ title, time, active, cascadeId, folder: folderUri });
       }
 
-      groups[0].items.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+      const groups = Object.entries(byFolder)
+        .map(([label, items]) => ({
+          label,
+          items: items.sort((a, b) => (b.time || '').localeCompare(a.time || '')),
+        }))
+        .sort((a, b) => {
+          const aTime = a.items[0]?.time || '';
+          const bTime = b.items[0]?.time || '';
+          return bTime.localeCompare(aTime);
+        });
 
       res.json({ ok: true, results: [{ value: { ok: true, groups } }] });
     } catch (err) {
@@ -604,7 +630,7 @@ function setupWorkspaceRoutes(app, broadcast) {
   app.post('/api/workspaces/:id/cdp/conversations/select', async (req, res) => {
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Not found' });
-    const { title, cascadeId } = req.body;
+    const { title, cascadeId, targetId } = req.body;
     try {
       let targetCascadeId = cascadeId;
 
@@ -623,9 +649,28 @@ function setupWorkspaceRoutes(app, broadcast) {
 
       if (!targetCascadeId) return res.json({ ok: false, error: 'conversation_not_found' });
 
-      await Workspace.findByIdAndUpdate(workspace._id, {
-        'gpi.activeCascadeId': targetCascadeId,
-      });
+      const update = { 'gpi.activeCascadeId': targetCascadeId };
+      if (targetId) update[`targetCascades.${targetId}`] = targetCascadeId;
+      await Workspace.findByIdAndUpdate(workspace._id, update);
+
+      try {
+        const trajResult = await gpiGetTrajectory(workspace, targetCascadeId);
+        if (trajResult.ok) {
+          const data = trajectoryToConversation(trajResult.data);
+          const payload = {
+            items: data.items,
+            statusText: data.statusText,
+            isBusy: data.isBusy,
+            turnCount: data.turnCount,
+            hasAcceptAll: data.hasAcceptAll,
+            hasRejectAll: data.hasRejectAll,
+            updatedAt: new Date(),
+          };
+          const convUpdate = { conversation: payload };
+          if (targetId) convUpdate[`targetConversations.${targetId}`] = payload;
+          await Workspace.findByIdAndUpdate(workspace._id, convUpdate);
+        }
+      } catch { }
 
       res.json({ ok: true, results: [{ value: { ok: true, selected: title || targetCascadeId } }] });
     } catch (err) {
@@ -637,6 +682,11 @@ function setupWorkspaceRoutes(app, broadcast) {
     try {
       const workspace = await Workspace.findById(req.params.id).lean();
       if (!workspace) return res.status(404).json({ error: 'Not found' });
+      const targetId = req.query.targetId;
+      if (targetId) {
+        const tc = workspace.targetConversations?.[targetId];
+        return res.json(tc || { items: [], turnCount: 0, statusText: '' });
+      }
       res.json(workspace.conversation || { items: [], turnCount: 0, statusText: '' });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -711,18 +761,13 @@ function setupWorkspaceRoutes(app, broadcast) {
     }
   });
 
-  const quotaCache = new Map();
-  const QUOTA_CACHE_TTL = 10000;
-
   async function getQuotaCached(workspace) {
-    const id = workspace._id.toString();
-    const cached = quotaCache.get(id);
-    if (cached && Date.now() - cached.ts < QUOTA_CACHE_TTL) {
-      return cached.data;
-    }
+    const key = workspace.accountId?.toString() || workspace._id.toString();
+    const cached = getCachedQuota(key);
+    if (cached) return cached;
     const quota = await fetchWorkspaceQuota(workspace);
     if (quota) {
-      quotaCache.set(id, { data: quota, ts: Date.now() });
+      setCachedQuota(key, quota);
       if (workspace.auth) {
         await Workspace.findByIdAndUpdate(workspace._id, {
           'auth.accessToken': workspace.auth.accessToken,
@@ -760,6 +805,10 @@ function setupWorkspaceRoutes(app, broadcast) {
           }
         } catch { }
       }
+      broadcast({
+        event: 'quota:all',
+        payload: getAllCachedQuotas(),
+      });
     } catch { }
   }
 
@@ -843,6 +892,64 @@ function setupWorkspaceRoutes(app, broadcast) {
         const repoName = url.replace(/\.git$/, '').split('/').pop();
         res.json({ ok: true, output: result.trim(), repoName });
       }
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/workspaces/:id/cdp/open-folder', async (req, res) => {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Not found' });
+    const { folderPath } = req.body;
+    if (!folderPath) return res.status(400).json({ error: 'folderPath required' });
+    try {
+      const targetPath = workspace.type === 'cli' ? folderPath : `/host${folderPath}`;
+      const cmd = JSON.stringify({ command: 'openFolder', path: targetPath });
+      if (workspace.type === 'cli') {
+        const b64 = Buffer.from(cmd).toString('base64');
+        await cliExec(workspace._id.toString(), `node -e "require('fs').writeFileSync(require('path').join(require('os').tmpdir(),'ag-connect-cmd.json'),Buffer.from('${b64}','base64').toString())"`, 5000);
+      } else {
+        await execInContainer(workspace.containerId, `echo '${cmd.replace(/'/g, "'\\''")}' > /tmp/ag-connect-cmd.json`);
+      }
+      if (workspace.mountedPath !== folderPath) {
+        workspace.mountedPath = folderPath;
+        await workspace.save();
+        broadcast({ event: 'workspace:updated', payload: workspace.toJSON() });
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/workspaces/:id/cdp/open-folder-new-window', async (req, res) => {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Not found' });
+    const { folderPath } = req.body;
+    if (!folderPath) return res.status(400).json({ error: 'folderPath required' });
+    try {
+      const targetPath = workspace.type === 'cli' ? folderPath : `/host${folderPath}`;
+      const cmd = JSON.stringify({ command: 'openFolderNewWindow', path: targetPath });
+      if (workspace.type === 'cli') {
+        const b64 = Buffer.from(cmd).toString('base64');
+        await cliExec(workspace._id.toString(), `node -e "require('fs').writeFileSync(require('path').join(require('os').tmpdir(),'ag-connect-cmd.json'),Buffer.from('${b64}','base64').toString())"`, 5000);
+      } else {
+        await execInContainer(workspace.containerId, `echo '${cmd.replace(/'/g, "'\\''")}' > /tmp/ag-connect-cmd.json`);
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/workspaces/:id/cdp/new-window', async (req, res) => {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Not found' });
+    if (workspace.type === 'cli') return res.status(400).json({ error: 'Docker only' });
+    try {
+      const cmd = JSON.stringify({ command: 'openFolderNewWindow', path: '/host' });
+      await execInContainer(workspace.containerId, `echo '${cmd.replace(/'/g, "'\\''")}' > /tmp/ag-connect-cmd.json`);
+      res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

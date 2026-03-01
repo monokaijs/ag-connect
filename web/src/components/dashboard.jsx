@@ -24,6 +24,7 @@ import {
   WifiOff,
   GitBranch,
   Folder,
+  FolderOpen,
 } from 'lucide-react';
 
 function getQuotaBarColor(pct) {
@@ -76,7 +77,7 @@ function formatRelativeTime(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function ConversationPicker({ open, onClose, fetchConversations, selectConversation }) {
+function ConversationPicker({ open, onClose, fetchConversations, selectConversation, activeFolder }) {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -88,7 +89,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
     setSearch('');
     setSwitching(null);
     setLoading(true);
-    fetchConversations().then(res => {
+    fetchConversations(activeFolder).then(res => {
       let items = [];
       if (res?.results) {
         const val = res.results.find(r => r.value?.ok)?.value;
@@ -106,7 +107,7 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }).catch(() => setLoading(false));
-  }, [open, fetchConversations]);
+  }, [open, fetchConversations, activeFolder]);
 
   if (!open) return null;
 
@@ -125,10 +126,10 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
     sectionMap[key].push(c);
   }
 
-  const handleSelect = async (title) => {
-    setSwitching(title);
+  const handleSelect = async (conv) => {
+    setSwitching(conv.cascadeId || conv.title);
     try {
-      await selectConversation(title);
+      await selectConversation(conv.title, conv.cascadeId);
     } catch { }
     setSwitching(null);
     onClose();
@@ -173,33 +174,31 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
           ) : (
             sections.map((section) => (
               <div key={section} className='mb-1'>
-                <div className='px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60'>
+                <div className='flex items-center gap-1.5 px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60'>
+                  <FolderOpen className='h-3 w-3' />
                   {section}
                 </div>
                 {sectionMap[section].map((conv, i) => (
                   <button
                     key={`${section}-${i}`}
-                    onClick={() => handleSelect(conv.title)}
+                    onClick={() => handleSelect(conv)}
                     disabled={switching !== null}
                     className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${conv.isCurrent
                       ? 'bg-primary/10 text-primary'
                       : 'text-foreground hover:bg-accent'
-                      } ${switching === conv.title ? 'opacity-60' : ''}`}
+                      } ${switching === (conv.cascadeId || conv.title) ? 'opacity-60' : ''}`}
                   >
                     <div className='flex min-w-0 flex-1 items-center gap-2'>
                       <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${conv.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
                       <div className='min-w-0 flex-1'>
                         <div className='truncate font-medium'>{conv.title}</div>
-                        {conv.workspace && (
-                          <div className='truncate text-[10px] text-muted-foreground/60'>{conv.workspace}</div>
-                        )}
                       </div>
                     </div>
                     <div className='flex items-center gap-2 shrink-0'>
                       {conv.time && (
                         <span className='text-[10px] text-muted-foreground/50'>{formatRelativeTime(conv.time)}</span>
                       )}
-                      {switching === conv.title && (
+                      {switching === (conv.cascadeId || conv.title) && (
                         <Loader2 className='h-3 w-3 animate-spin' />
                       )}
                     </div>
@@ -214,8 +213,8 @@ function ConversationPicker({ open, onClose, fetchConversations, selectConversat
   );
 }
 
-export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit, editingFile, setEditingFile }) {
-  const { status, statusText, currentModel, setCurrentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot } = ag;
+export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPanel, quota, showTerminal, setShowTerminal, showGit, setShowGit, editingFile, setEditingFile, activeTargetId }) {
+  const { status, statusText, currentModel, setCurrentModel, isBusy, isLoading, hasAcceptAll, hasRejectAll, clickAcceptAll, clickRejectAll, clickNewChat, fetchConversations, selectConversation, items, sendMessage, stopAgent, fetchModels, changeModel, captureScreenshot, targets } = ag;
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [optimisticItem, setOptimisticItem] = useState(null);
@@ -337,6 +336,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
   const handleSelectModel = async (modelObj) => {
     setModelsOpen(false);
     setCurrentModel(modelObj.label);
+    setModels(prev => prev.map(m => ({ ...m, selected: m.label === modelObj.label })));
     try {
       await changeModel(modelObj.label, modelObj.modelUid);
     } catch { }
@@ -504,15 +504,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
                           <Check className={`h-3.5 w-3.5 shrink-0 ${m.selected ? 'opacity-100' : 'opacity-0'}`} />
                           <span className='truncate flex-1'>{m.label}</span>
                           {modelQuota !== null && (
-                            <div className='flex items-center gap-1.5 shrink-0'>
-                              <div className='w-10 h-1.5 rounded-full bg-muted overflow-hidden'>
-                                <div
-                                  className={`h-full rounded-full transition-all duration-500 ${getQuotaBarColor(modelQuota)}`}
-                                  style={{ width: `${modelQuota}%` }}
-                                />
-                              </div>
-                              <span className={`text-[10px] font-medium w-7 text-right ${getQuotaTextColor(modelQuota)}`}>{modelQuota}%</span>
-                            </div>
+                            <span className={`text-[10px] font-medium shrink-0 ${getQuotaTextColor(modelQuota)}`}>{modelQuota}%</span>
                           )}
                         </button>
                       );
@@ -618,6 +610,7 @@ export default function Dashboard({ workspace, ag, showHostPanel, setShowHostPan
         onClose={() => setPickerOpen(false)}
         fetchConversations={fetchConversations}
         selectConversation={selectConversation}
+        activeFolder={(targets || []).find(t => t.id === activeTargetId)?.folder}
       />
 
     </div>

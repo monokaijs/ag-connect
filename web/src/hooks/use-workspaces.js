@@ -150,17 +150,23 @@ export function useWorkspaces() {
       const workspaceId = state.workspace;
       const redirectUri = `${window.location.origin}/api/oauth/google/callback`;
 
-      setActiveId(workspaceId);
+      if (workspaceId) setActiveId(workspaceId);
 
-      const res = await authFetch(`${getApiBase()}/api/oauth/exchange`, {
+      const res = await authFetch(`${getApiBase()}/api/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, workspaceId, redirectUri }),
+        body: JSON.stringify({ code, redirectUri }),
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        console.error('[oauth] Exchange failed:', err);
+      if (res.ok && workspaceId) {
+        const data = await res.json();
+        if (data.account) {
+          await authFetch(`${getApiBase()}/api/workspaces/${workspaceId}/set-account`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: data.account._id }),
+          });
+        }
       }
     } catch (err) {
       console.error('[oauth] Callback error:', err);
@@ -273,17 +279,22 @@ export function useWorkspaces() {
       setOauthPending(null);
       setActiveId(pendingWs);
 
-      const res = await authFetch(`${getApiBase()}/api/oauth/exchange`, {
+      const res = await authFetch(`${getApiBase()}/api/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          workspaceId: pendingWs,
-          redirectUri: LOCALHOST_REDIRECT,
-        }),
+        body: JSON.stringify({ code, redirectUri: LOCALHOST_REDIRECT }),
       });
 
-      if (!res.ok) {
+      if (res.ok) {
+        const data = await res.json();
+        if (data.account && pendingWs) {
+          await authFetch(`${getApiBase()}/api/workspaces/${pendingWs}/set-account`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: data.account._id }),
+          });
+        }
+      } else {
         const err = await res.json();
         console.error('[oauth] Exchange failed:', err);
       }

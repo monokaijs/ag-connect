@@ -93,6 +93,8 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   const overallQuota = getOverallQuota(quota);
   const { confirm, dialog } = useConfirm();
 
+  const [showNewWindowPicker, setShowNewWindowPicker] = useState(false);
+
   const handleClone = async () => {
     if (!cloneUrl.trim() || cloning) return;
     setCloning(true);
@@ -133,187 +135,6 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
   return (
     <div className="shrink-0">
       {dialog}
-      <div className="flex items-center h-9 px-4 bg-zinc-950 border-b border-white/5">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {onOpenMobileNav && (
-            <button
-              onClick={onOpenMobileNav}
-              className="md:hidden flex items-center justify-center w-6 h-6 text-zinc-400 hover:text-white transition-colors shrink-0"
-            >
-              <Menu className="w-4 h-4" />
-            </button>
-          )}
-          <div className={`w-2 h-2 rounded-full ${statusDot[workspace.status] || 'bg-zinc-600'} shrink-0`} title={statusLabel[workspace.status]} />
-          {editing ? (
-            <input
-              autoFocus
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={submitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); submitRename(); }
-                if (e.key === 'Escape') { submittedRef.current = true; setEditing(false); }
-              }}
-              className="text-sm font-medium text-white bg-transparent border-b border-indigo-500/50 outline-none px-0 py-0 w-40"
-            />
-          ) : (
-            <span className="text-sm font-medium text-white truncate">{workspace.name}</span>
-          )}
-          <button
-            onClick={() => { setEditName(workspace.name); submittedRef.current = false; setEditing(!editing); }}
-            title="Rename"
-            className="text-zinc-500 hover:text-white transition-colors shrink-0"
-          >
-            <Pencil className="w-3 h-3" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className={`flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-medium transition-colors ${isRunning ? 'bg-emerald-500/10 text-emerald-400' : isStopped || workspace.status === 'error' ? 'bg-zinc-800 text-zinc-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                {isLoading ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : isRunning ? (
-                  <Play className="w-3 h-3 fill-current" />
-                ) : (
-                  <Square className="w-3 h-3" />
-                )}
-                <span className="hidden md:inline">{statusLabel[workspace.status]}</span>
-                <ChevronDown className="w-2.5 h-2.5 opacity-50" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-44 p-1 bg-zinc-900 border border-white/10 rounded-lg shadow-xl">
-              {(isStopped || workspace.status === 'error') && (
-                <button
-                  onClick={onStart}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-emerald-400 hover:bg-emerald-400/5 rounded-md transition-colors text-left"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  Start
-                </button>
-              )}
-              {isRunning && (
-                <button
-                  onClick={() => confirm({
-                    title: 'Stop Workspace',
-                    description: `Stop "${workspace.name}"? The container will be stopped but not removed.`,
-                    confirmLabel: 'Stop',
-                    variant: 'warning',
-                  }).then(() => onStop())}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-amber-400 hover:bg-amber-400/5 rounded-md transition-colors text-left"
-                >
-                  <Square className="w-3.5 h-3.5" />
-                  Stop
-                </button>
-              )}
-              {(isRunning || isStopped) && (
-                <button
-                  onClick={() => confirm({
-                    title: 'Restart Workspace',
-                    description: `Restart "${workspace.name}"? This may take a moment.`,
-                    confirmLabel: 'Restart',
-                    variant: 'warning',
-                  }).then(() => onRestart())}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-blue-400 hover:bg-blue-400/5 rounded-md transition-colors text-left"
-                >
-                  <RotateCw className="w-3.5 h-3.5" />
-                  Restart
-                </button>
-              )}
-              <div className="h-px bg-white/5 my-1" />
-              <button
-                onClick={() => confirm({
-                  title: 'Delete Workspace',
-                  description: `Permanently delete "${workspace.name}"? This cannot be undone.`,
-                  confirmLabel: 'Delete',
-                  variant: 'danger',
-                }).then(() => onDelete())}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-red-400 hover:bg-red-400/5 rounded-md transition-colors text-left"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete
-              </button>
-            </PopoverContent>
-          </Popover>
-          {workspace.auth?.email && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button title={workspace.auth.email} className="flex items-center gap-2 h-7 px-2 rounded-md hover:bg-white/5 transition-colors">
-                  <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border border-white/10">
-                    {workspace.auth.avatar ? (
-                      <img src={workspace.auth.avatar} alt="User avatar" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-zinc-800 text-[10px] font-medium text-zinc-300">
-                        {workspace.auth.email.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-64 p-0 mt-1 bg-[#1e1e1e] border-white/10" sideOffset={4}>
-                <div className="px-3 py-2.5 border-b border-white/5 flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-white/10 shrink-0">
-                    {workspace.auth.avatar ? (
-                      <img src={workspace.auth.avatar} alt="User avatar" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-zinc-800 text-sm font-medium text-zinc-300">
-                        {workspace.auth.email.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium text-white truncate">{workspace.auth.name || 'Developer'}</span>
-                    <span className="text-[10px] text-zinc-500 truncate">{workspace.auth.email}</span>
-                    {quota?.tier && (
-                      <span className="text-[10px] font-medium text-violet-400 capitalize mt-0.5">{quota.tier} Plan</span>
-                    )}
-                  </div>
-                </div>
-
-                {quota?.quotas && Object.keys(quota.quotas).length > 0 && (
-                  <div className="px-3 py-2 border-b border-white/5">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Gauge className="w-3 h-3 text-zinc-400" />
-                      <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider">Quota</span>
-                    </div>
-                    <div className="space-y-2">
-                      {Object.entries(quota.quotas)
-                        .sort(([a], [b]) => a.localeCompare(b))
-                        .map(([model, pct]) => (
-                          <div key={model}>
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-[10px] text-zinc-400 truncate">{prettifyModelName(model)}</span>
-                              <span className={`text-[10px] font-medium shrink-0 ml-2 ${getQuotaTextColor(pct)}`}>
-                                {pct}%{quota.resets?.[model] ? ` · ${formatResetTime(quota.resets[model])}` : ''}
-                              </span>
-                            </div>
-                            <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-500 ${getQuotaColor(pct)}`}
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="p-1">
-                  <button
-                    onClick={onClearAuth}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-white/5 rounded-md transition-colors text-left"
-                  >
-                    <LogOut className="w-3 h-3" />
-                    Log out workspace
-                  </button>
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-        </div>
-      </div>
 
       <div className="flex items-center h-8 px-3 bg-zinc-950 border-b border-white/5 overflow-x-auto no-scrollbar whitespace-nowrap">
         <div className="flex items-center gap-0.5 flex-1 min-w-max">
@@ -345,7 +166,7 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                         <ChevronDown className="w-2.5 h-2.5 opacity-50" />
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent align="start" className="w-48 p-1 bg-zinc-900 border border-white/10 rounded-lg shadow-xl">
+                    <PopoverContent align="start" className="w-52 p-1 bg-zinc-900 border border-white/10 rounded-lg shadow-xl">
                       <button
                         onClick={() => setShowPicker(true)}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
@@ -353,6 +174,14 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
                         <FolderOpen className="w-3.5 h-3.5" />
                         Open Folder
                       </button>
+                      <button
+                        onClick={() => setShowNewWindowPicker(true)}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
+                      >
+                        <MonitorPlay className="w-3.5 h-3.5" />
+                        Open in New Window
+                      </button>
+                      <div className="h-px bg-white/5 my-1" />
                       <button
                         onClick={() => setShowClone(true)}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:text-white hover:bg-white/5 rounded-md transition-colors text-left"
@@ -452,9 +281,20 @@ export default function HeaderBar({ workspace, ag, onStart, onStop, onRestart, o
       <FolderPickerDialog
         open={showPicker}
         onClose={() => setShowPicker(false)}
-        onSelect={(path) => {
+        workspaceId={workspace._id}
+        onSelect={(folderPath) => {
           setShowPicker(false);
-          if (onUpdate) onUpdate({ mountedPath: path });
+          if (ag?.openFolder) ag.openFolder(folderPath);
+          else if (onUpdate) onUpdate({ mountedPath: folderPath });
+        }}
+      />
+      <FolderPickerDialog
+        open={showNewWindowPicker}
+        onClose={() => setShowNewWindowPicker(false)}
+        workspaceId={workspace._id}
+        onSelect={(folderPath) => {
+          setShowNewWindowPicker(false);
+          if (ag?.openFolderNewWindow) ag.openFolderNewWindow(folderPath);
         }}
       />
       {showClone && (

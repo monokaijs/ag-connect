@@ -3,10 +3,9 @@ import { getWsBase } from '../config';
 import { Loader2, X, AlertCircle } from 'lucide-react';
 import { getAuthToken } from '../hooks/use-auth';
 
-export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onControlsChange }, ref) {
+export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onControlsChange, activeTargetId }, ref) {
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState(null);
-  const [activeTargetId, setActiveTargetId] = useState(null);
   const [quality, setQuality] = useState('720p');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -17,22 +16,6 @@ export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onCont
 
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1 });
   const panRef = useRef({ active: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 });
-
-  const targets = ag?.targets || [];
-
-  useEffect(() => {
-    if (!targets.length) return;
-    setActiveTargetId(prev => {
-      if (!prev) {
-        const editor = targets.find(t => t.url?.includes('workbench.html'));
-        if (editor) return editor.id;
-        const wb = targets.find(t => t.url?.includes('workbench'));
-        return wb ? wb.id : targets[0].id;
-      }
-      if (!targets.find(t => t.id === prev)) return targets[0].id;
-      return prev;
-    });
-  }, [targets]);
 
   useEffect(() => {
     if (!workspaceId || !activeTargetId) return;
@@ -329,34 +312,6 @@ export const VncViewer = forwardRef(function VncViewer({ workspaceId, ag, onCont
         onKeyDown={handleHiddenKeyDown}
         onKeyUp={handleHiddenKeyUp}
       />
-
-      {targets.length > 0 && (
-        <div className="shrink-0 h-10 bg-zinc-950 border-b border-white/5 flex items-center px-2 gap-2 overflow-x-auto no-scrollbar z-10">
-          {targets.map(t => (
-            <div
-              key={t.id}
-              onClick={() => setActiveTargetId(t.id)}
-              className={`group flex items-center h-7 px-2.5 rounded text-[11px] font-medium transition-colors whitespace-nowrap cursor-pointer ${activeTargetId === t.id ? 'bg-white/10 text-white' : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'}`}
-              title={t.url}
-            >
-              <div className={`w-1.5 h-1.5 mr-1.5 rounded-full shrink-0 ${activeTargetId === t.id ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.5)]' : 'bg-zinc-700'}`} />
-              <span className="truncate max-w-[150px] mr-1">{t.title || 'Window'}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  ag?.closeTarget(t.id);
-                  ag?.setTargets(prev => prev.filter(x => x.id !== t.id));
-                  if (activeTargetId === t.id) setActiveTargetId(targets.find(x => x.id !== t.id)?.id || null);
-                }}
-                className={`flex items-center justify-center w-5 h-5 rounded ml-1 transition-colors ${activeTargetId === t.id ? 'hover:bg-white/20 text-white/50 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:bg-white/10 text-zinc-500 hover:text-white'}`}
-                title="Close Window"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       <div
         className="flex-1 w-full min-h-0 flex flex-col items-center justify-center focus:outline-none relative"

@@ -5,6 +5,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import net from 'net';
 import { injectTokensIntoContainer } from './token-injector.mjs';
+import { getSettings } from './models/settings.mjs';
 
 const socketPaths = [
   process.env.DOCKER_SOCKET,
@@ -62,9 +63,14 @@ async function createWorkspaceContainer(workspace, broadcast) {
 
     const volumeName = `ag-data-${ws._id.toString().slice(-8)}`;
     const binds = [`${volumeName}:/home/aguser/.config/Antigravity`];
-    if (ws.mountedPath) {
-      binds.push(`${ws.mountedPath}:/workspace`);
-    }
+
+    const settings = await getSettings();
+    const hostMount = settings.hostMountPath || '/';
+    binds.push(`${hostMount}:/host`);
+
+    const workspaceFolder = ws.mountedPath
+      ? `/host${ws.mountedPath.startsWith(hostMount) && hostMount !== '/' ? ws.mountedPath.slice(hostMount.length) : ws.mountedPath}`
+      : '/host';
 
     const hostConfig = {
       PortBindings: {
@@ -83,7 +89,7 @@ async function createWorkspaceContainer(workspace, broadcast) {
       name: containerName,
       ExposedPorts: { '9223/tcp': {} },
       HostConfig: hostConfig,
-      Env: ['WORKSPACE_FOLDER=/workspace'],
+      Env: [`WORKSPACE_FOLDER=${workspaceFolder}`],
     };
 
     const container = await docker.createContainer(createOpts);
@@ -235,16 +241,9 @@ async function startWorkspaceContainer(workspace, broadcast) {
     }
 
     const binds = info.HostConfig.Binds || [];
-    const expectedBind = workspace.mountedPath ? `${workspace.mountedPath}:/workspace` : null;
+    const hasHostMount = binds.some(b => b.includes(':/host'));
 
-    let mountMatches = false;
-    if (!expectedBind && binds.length === 0) mountMatches = true;
-    if (expectedBind && binds.includes(expectedBind)) mountMatches = true;
-
-    const containerEnv = info.Config.Env || [];
-    const hasWorkspaceOverride = !workspace.mountedPath || containerEnv.some(e => e.startsWith('WORKSPACE_FOLDER='));
-
-    if (!mountMatches || !hasWorkspaceOverride) {
+    if (!hasHostMount && workspace.mountedPath) {
       await removeWorkspaceContainer(workspace);
       return createWorkspaceContainer(workspace, broadcast);
     }
@@ -259,15 +258,7 @@ async function startWorkspaceContainer(workspace, broadcast) {
 
     const ready = await waitForContainerReady(workspace.cdpHost || 'localhost', workspace.cdpPort || workspace.ports.debug, 90);
     if (ready) {
-
-
       const hasAuth = workspace.auth && workspace.auth.accessToken;
-      if (hasAuth) {
-        await injectTokensIntoContainer(workspace.containerId, workspace.auth.accessToken, workspace.auth.refreshToken || '', workspace.auth.expiryTimestamp || 0);
-        await restartIDEInContainer(workspace.containerId);
-        await waitForContainerReady(workspace.cdpHost || 'localhost', workspace.cdpPort || workspace.ports.debug, 90);
-      }
-
       workspace.status = hasAuth ? 'running' : 'needsLogin';
       workspace.stage = '';
       await workspace.save();
@@ -312,6 +303,7 @@ async function execInContainer(containerId, cmd) {
 }
 
 async function restartIDEInContainer(containerId) {
+  await new Promise(r => setTimeout(r, 2000));
   const container = docker.getContainer(containerId);
   await container.restart({ t: 5 });
 }

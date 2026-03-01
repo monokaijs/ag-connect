@@ -3,11 +3,12 @@ import { Loader2, Folder, X, ChevronRight, Check } from 'lucide-react';
 import { getApiBase } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 
-export function FolderPickerDialog({ open, onClose, onSelect }) {
+export function FolderPickerDialog({ open, onClose, onSelect, workspaceId }) {
   const [currentPath, setCurrentPath] = useState('');
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [hostMountPath, setHostMountPath] = useState('');
 
   useEffect(() => {
     if (open) {
@@ -19,9 +20,12 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
     setLoading(true);
     setError(null);
     try {
-      const url = targetPath
-        ? `${getApiBase()}/api/system/ls?path=${encodeURIComponent(targetPath)}`
+      const base = workspaceId
+        ? `${getApiBase()}/api/workspaces/${workspaceId}/ls`
         : `${getApiBase()}/api/system/ls`;
+      const url = targetPath
+        ? `${base}?path=${encodeURIComponent(targetPath)}`
+        : base;
       const res = await fetch(url, { headers: getAuthHeaders() });
       const data = await res.json();
 
@@ -30,6 +34,7 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
       } else {
         setCurrentPath(data.path);
         setFolders(data.folders || []);
+        if (data.hostMountPath) setHostMountPath(data.hostMountPath);
       }
     } catch (err) {
       setError(err.message);
@@ -43,11 +48,10 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-[#181818] border border-white/10 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
 
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#1e1e1e]">
           <h2 className="text-sm font-medium text-white flex items-center gap-2">
             <Folder className="w-4 h-4 text-blue-400" />
-            Select Host Folder
+            Select Folder
           </h2>
           <button
             onClick={onClose}
@@ -57,15 +61,16 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
           </button>
         </div>
 
-        {/* Current Path */}
         <div className="px-4 py-3 bg-[#111] border-b border-white/5 flex flex-col gap-2">
           <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Current Path</label>
           <div className="bg-[#1e1e1e] border border-white/10 rounded flex items-center px-3 py-1.5 min-h-[32px]">
-            <span className="text-xs text-zinc-300 truncate w-full">{currentPath || 'Loading...'}</span>
+            <span className="text-xs text-zinc-300 truncate w-full font-mono">{currentPath || 'Loading...'}</span>
           </div>
+          {hostMountPath && (
+            <div className="text-[10px] text-zinc-600">Scoped to: {hostMountPath}</div>
+          )}
         </div>
 
-        {/* Browser */}
         <div className="flex-1 overflow-y-auto max-h-[400px] min-h-[300px] p-2 bg-[#181818]">
           {loading ? (
             <div className="h-full flex items-center justify-center">
@@ -103,7 +108,6 @@ export function FolderPickerDialog({ open, onClose, onSelect }) {
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-4 py-3 border-t border-white/10 bg-[#1e1e1e] flex items-center justify-end gap-2">
           <button
             onClick={onClose}

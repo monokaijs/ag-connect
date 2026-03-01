@@ -1,27 +1,15 @@
-import http from 'http';
-import { WebSocket } from 'ws';
-
-const CDP_HOST = process.env.HOST_MOUNT_POINT ? 'host.docker.internal' : '127.0.0.1';
-
-function getJson(url) {
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, (res) => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
-    });
-    req.on('error', reject);
-    req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
-  });
-}
+import WebSocket from 'ws';
 
 async function getTargetsOnPort(port, host) {
-  const h = host || CDP_HOST;
+  const h = host || '127.0.0.1';
   try {
-    const list = await getJson(`http://${h}:${port}/json/list`);
+    const res = await fetch(`http://${h}:${port}/json/list`);
+    const list = await res.json();
     return list.map(t => ({
       ...t,
-      wsUrl: t.webSocketDebuggerUrl ? t.webSocketDebuggerUrl.replace(/127\.0\.0\.1:\d+/, `${h}:${port}`) : null
+      wsUrl: t.webSocketDebuggerUrl
+        ? t.webSocketDebuggerUrl.replace(/127\.0\.0\.1:\d+/, `${h}:${port}`)
+        : null,
     }));
   } catch {
     return [];
@@ -47,8 +35,10 @@ async function findTargetOnPort(port, filter = 'launchpad', host) {
   return { target: found, wsUrl: found.wsUrl, port };
 }
 
-async function connectAndEval(wsUrl, expression, timeout = 10000) {
+async function connectAndEval(wsUrl, expression, timeout = 10000, evaluateAll = false) {
   const ws = new WebSocket(wsUrl);
+  const results = [];
+
   try {
     await new Promise((resolve, reject) => {
       ws.on('open', resolve);
@@ -57,30 +47,34 @@ async function connectAndEval(wsUrl, expression, timeout = 10000) {
     });
 
     let idCounter = 1;
-    const contexts = [];
-
-    const call = (method, params) => new Promise((resolve, reject) => {
+    const call = (method, params) => new Promise((res, rej) => {
       const id = idCounter++;
       const handler = (raw) => {
         const data = JSON.parse(raw.toString());
-        if (data.id === id) { ws.off('message', handler); if (data.error) reject(data.error); else resolve(data.result); }
+        if (data.id === id) {
+          ws.removeListener('message', handler);
+          if (data.error) rej(data.error);
+          else res(data.result);
+        }
       };
       ws.on('message', handler);
-      setTimeout(() => { ws.off('message', handler); reject(new Error('RPC Timeout')); }, timeout);
+      setTimeout(() => { ws.removeListener('message', handler); rej(new Error('rpc_timeout')); }, timeout);
       ws.send(JSON.stringify({ id, method, params }));
     });
 
+    const contexts = [];
     ws.on('message', (raw) => {
       try {
         const data = JSON.parse(raw.toString());
-        if (data.method === 'Runtime.executionContextCreated') contexts.push(data.params.context);
+        if (data.method === 'Runtime.executionContextCreated') {
+          contexts.push(data.params.context);
+        }
       } catch { }
     });
 
     await call('Runtime.enable', {});
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 500));
 
-    const results = [];
     for (const ctx of contexts) {
       try {
         const evalResult = await call('Runtime.evaluate', {
@@ -92,11 +86,10 @@ async function connectAndEval(wsUrl, expression, timeout = 10000) {
         const val = evalResult.result?.value;
         if (val !== undefined && val !== null) {
           results.push({ contextId: ctx.id, value: val });
-
-          // Stop evaluating in other contexts if this one found the target DOM elements
-          // or successfully performed the action (preventing multiple clicks in shared DOM)
-          if (val.ok === true || val.turnCount !== undefined || val.models !== undefined || val.conversations !== undefined) {
-            break;
+          if (!evaluateAll) {
+            if (val.ok === true || val.turnCount !== undefined || val.models !== undefined) {
+              break;
+            }
           }
         }
       } catch { }
@@ -110,8 +103,61 @@ async function connectAndEval(wsUrl, expression, timeout = 10000) {
 async function cdpEvalOnPort(port, expression, opts = {}) {
   const target = await findTargetOnPort(port, opts.target || 'launchpad', opts.host);
   if (!target) return { ok: false, error: 'cdp_not_found' };
-  const results = await connectAndEval(target.wsUrl, expression, opts.timeout || 10000);
+  const results = await connectAndEval(target.wsUrl, expression, opts.timeout || 10000, opts.evaluateAll || false);
   return { ok: true, results };
 }
 
-export { cdpEvalOnPort, findTargetOnPort, getTargetsOnPort };
+async function cdpEvalOnAllTargets(port, expression, opts = {}) {
+  const allTargets = await getTargetsOnPort(port, opts.host);
+  const workbenchTargets = allTargets.filter(t =>
+    (t.type === 'page' || t.type === 'app') &&
+    t.url?.includes('workbench') &&
+    !t.title?.toLowerCase().includes('launchpad') &&
+    t.wsUrl
+  );
+  const allResults = [];
+  for (const t of workbenchTargets) {
+    try {
+      const results = await connectAndEval(t.wsUrl, expression, opts.timeout || 10000, true);
+      allResults.push(...results);
+    } catch { }
+  }
+  return { ok: true, results: allResults };
+}
+
+const FOLDER_EXPR = [
+  '(function(){',
+  'if(window.__workspaceFolder)return window.__workspaceFolder;',
+  'try{var p=typeof vscode!=="undefined"&&vscode.process&&vscode.process.env&&vscode.process.env.PWD;',
+  'if(p){window.__workspaceFolder=p;return p;}}catch(e){}',
+  'try{var u=new URL(window.location.href);var f=u.searchParams.get("folder");',
+  'if(f){window.__workspaceFolder=f;return f;}}catch(e){}',
+  'try{var lbls=Array.from(document.querySelectorAll("[aria-label]")).map(x=>x.getAttribute("aria-label")).filter(x=>x&&x.startsWith("/host/"));',
+  'if(lbls.length){var path=lbls[0];var folder=path.substring(0,path.lastIndexOf("/"));',
+  'window.__workspaceFolder=folder;return folder;}}catch(e){}',
+  'return "";',
+  '})()'
+].join('');
+
+async function getTargetWorkspaceFolders(port, host) {
+  const allTargets = await getTargetsOnPort(port, host);
+  const workbenchTargets = allTargets.filter(t =>
+    (t.type === 'page' || t.type === 'app') &&
+    t.url?.includes('workbench') &&
+    !t.title?.toLowerCase().includes('launchpad') &&
+    t.wsUrl
+  );
+
+  const results = {};
+  for (const t of workbenchTargets) {
+    try {
+      const r = await connectAndEval(t.wsUrl, FOLDER_EXPR, 5000);
+      if (r.length > 0 && r[0].value) {
+        results[t.id] = r[0].value;
+      }
+    } catch { }
+  }
+  return results;
+}
+
+export { cdpEvalOnPort, cdpEvalOnAllTargets, findTargetOnPort, getTargetsOnPort, getTargetWorkspaceFolders, connectAndEval, FOLDER_EXPR };

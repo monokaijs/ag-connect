@@ -58,6 +58,8 @@ COPY --chown=aguser:aguser docker/ag-settings/User/settings.json /home/aguser/.c
 COPY --chown=aguser:aguser docker/ag-settings/User/globalStorage/storage.json /home/aguser/.config/Antigravity/User/globalStorage/storage.json
 COPY --chown=aguser:aguser docker/ag-settings/User/globalStorage/state.vscdb /home/aguser/.config/Antigravity/User/globalStorage/state.vscdb
 
+COPY --chown=aguser:aguser extensions/ag-connect-helper /app/extensions/ag-connect-helper
+
 COPY --chown=aguser:aguser docker/entrypoint.sh /home/aguser/entrypoint.sh
 RUN chmod +x /home/aguser/entrypoint.sh
 

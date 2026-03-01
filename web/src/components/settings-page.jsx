@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn } from 'lucide-react';
 import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 import { isNative } from '@/lib/capacitor';
+import { FolderPickerDialog } from './folder-picker';
 
 function authFetch(url, opts = {}) {
   const headers = { ...getAuthHeaders(), ...(opts.headers || {}) };
@@ -43,7 +44,104 @@ export default function SettingsPage({ auth, push }) {
     } catch { }
   }, []);
 
-  useEffect(() => { fetchKeys(); fetchFirebaseStatus(); }, [fetchKeys, fetchFirebaseStatus]);
+  useEffect(() => { fetchKeys(); fetchFirebaseStatus(); fetchAccounts(); }, [fetchKeys, fetchFirebaseStatus]);
+
+  const [googleAccounts, setGoogleAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [accountCallbackUrl, setAccountCallbackUrl] = useState('');
+  const [showAccountOAuth, setShowAccountOAuth] = useState(null);
+  const [accountQuotas, setAccountQuotas] = useState({});
+
+  const GOOGLE_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
+  const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+  const GOOGLE_SCOPES = [
+    'https://www.googleapis.com/auth/cloud-platform',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/cclog',
+    'https://www.googleapis.com/auth/experimentsandconfigs',
+  ].join(' ');
+
+  const fetchAccounts = async () => {
+    try {
+      const res = await authFetch(`${getApiBase()}/api/accounts`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setGoogleAccounts(data);
+        data.forEach(a => {
+          authFetch(`${getApiBase()}/api/accounts/${a._id}/quota`)
+            .then(r => r.json())
+            .then(q => { if (q.ok) setAccountQuotas(prev => ({ ...prev, [a._id]: q })); })
+            .catch(() => { });
+        });
+      }
+    } catch { }
+    setAccountsLoading(false);
+  };
+
+  const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  const startAddAccount = () => {
+    const state = btoa(JSON.stringify({ settings: true }));
+    if (isLocalhost) {
+      const redirectUri = `${window.location.origin}/api/oauth/google/callback`;
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: GOOGLE_SCOPES,
+        access_type: 'offline',
+        prompt: 'consent',
+        include_granted_scopes: 'true',
+        state,
+      });
+      window.location.href = `${GOOGLE_AUTH_URL}?${params.toString()}`;
+    } else {
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: 'http://localhost:1/oauth/callback',
+        response_type: 'code',
+        scope: GOOGLE_SCOPES,
+        access_type: 'offline',
+        prompt: 'consent',
+        include_granted_scopes: 'true',
+        state,
+      });
+      setShowAccountOAuth(`${GOOGLE_AUTH_URL}?${params.toString()}`);
+    }
+  };
+
+  const submitAccountCallback = async () => {
+    if (!accountCallbackUrl.trim()) return;
+    setAddingAccount(true);
+    try {
+      const url = new URL(accountCallbackUrl.trim());
+      const code = url.searchParams.get('code');
+      if (!code) { alert('No code found in URL'); setAddingAccount(false); return; }
+      const res = await authFetch(`${getApiBase()}/api/accounts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri: 'http://localhost:1/oauth/callback' }),
+      });
+      if (res.ok) {
+        setShowAccountOAuth(null);
+        setAccountCallbackUrl('');
+        fetchAccounts();
+      }
+    } catch (err) {
+      alert('Failed to add account');
+    }
+    setAddingAccount(false);
+  };
+
+  const deleteAccount = async (id) => {
+    if (!confirm('Remove this Google account? Workspaces using it will need to be reassigned.')) return;
+    try {
+      await authFetch(`${getApiBase()}/api/accounts/${id}`, { method: 'DELETE' });
+      fetchAccounts();
+    } catch { }
+  };
 
   const addKey = async () => {
     if (!name.trim() || !privateKey.trim()) return;
@@ -111,6 +209,36 @@ export default function SettingsPage({ auth, push }) {
     } catch { }
   };
 
+  const [hostMountPath, setHostMountPath] = useState('');
+  const [hostMountLoading, setHostMountLoading] = useState(false);
+  const [showHostPicker, setShowHostPicker] = useState(false);
+  const [hostMountSaved, setHostMountSaved] = useState(false);
+
+  const fetchHostPath = useCallback(async () => {
+    try {
+      const res = await authFetch(`${getApiBase()}/api/settings/host-path`);
+      const data = await res.json();
+      setHostMountPath(data.hostMountPath || '');
+    } catch { }
+  }, []);
+
+  useEffect(() => { fetchHostPath(); }, [fetchHostPath]);
+
+  const saveHostPath = async (pathVal) => {
+    setHostMountLoading(true);
+    try {
+      await authFetch(`${getApiBase()}/api/settings/host-path`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostMountPath: pathVal }),
+      });
+      setHostMountPath(pathVal);
+      setHostMountSaved(true);
+      setTimeout(() => setHostMountSaved(false), 2000);
+    } catch { }
+    setHostMountLoading(false);
+  };
+
   const saveServerUrl = () => {
     const cleaned = serverUrl.trim().replace(/\/+$/, '');
     if (cleaned) {
@@ -151,6 +279,165 @@ export default function SettingsPage({ auth, push }) {
             </div>
           </div>
         )}
+
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <LogIn className="w-4 h-4 text-zinc-400" />
+              <h2 className="text-sm font-medium text-white">Google Accounts</h2>
+              <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{googleAccounts.length}</span>
+            </div>
+            <button
+              onClick={startAddAccount}
+              className="flex items-center gap-1.5 h-7 px-3 text-[11px] font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded-lg transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              Add Account
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-500 mb-4">
+            Google accounts are shared across all workspaces. Add accounts here and assign them to workspaces.
+          </p>
+
+          {showAccountOAuth && (
+            <div className="bg-zinc-900 border border-white/10 rounded-lg p-4 mb-4">
+              <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 1: Open this link and sign in</label>
+              <div className="flex gap-2 mb-3">
+                <input readOnly value={showAccountOAuth} className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-zinc-300 truncate outline-none font-mono" />
+                <a href={showAccountOAuth} target="_blank" rel="noopener noreferrer" className="h-8 px-3 text-[11px] font-medium bg-zinc-700 text-white hover:bg-zinc-600 rounded-lg flex items-center transition-colors">Open</a>
+              </div>
+              <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">Step 2: Paste the callback URL</label>
+              <textarea
+                value={accountCallbackUrl}
+                onChange={(e) => setAccountCallbackUrl(e.target.value)}
+                placeholder="http://localhost:1/oauth/callback?code=...&state=..."
+                className="w-full px-3 py-2 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none h-16 mb-3"
+              />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => { setShowAccountOAuth(null); setAccountCallbackUrl(''); }} className="h-7 px-3 text-[11px] text-zinc-400 hover:text-white rounded-lg border border-white/10 transition-colors">Cancel</button>
+                <button onClick={submitAccountCallback} disabled={!accountCallbackUrl.includes('code=') || addingAccount} className="h-7 px-3 text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg transition-colors">
+                  {addingAccount ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add Account'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {accountsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+            </div>
+          ) : googleAccounts.length === 0 ? (
+            <div className="text-center py-8 text-zinc-600">
+              <LogIn className="w-6 h-6 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">No Google accounts linked</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {googleAccounts.map(a => {
+                const q = accountQuotas[a._id];
+                const tierColors = { ultra: 'text-amber-400 bg-amber-500/10 border-amber-500/20', pro: 'text-purple-400 bg-purple-500/10 border-purple-500/20', free: 'text-zinc-400 bg-zinc-700/50 border-zinc-600/30' };
+                const tierLabel = q?.tier ? q.tier.charAt(0).toUpperCase() + q.tier.slice(1) : null;
+                const quotaEntries = q?.quotas ? Object.entries(q.quotas) : [];
+                const avgUsage = quotaEntries.length > 0 ? Math.round(quotaEntries.reduce((s, [, v]) => s + v, 0) / quotaEntries.length) : null;
+                return (
+                  <div key={a._id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {a.avatar ? (
+                          <img src={a.avatar} className="w-7 h-7 rounded-full shrink-0" alt="" />
+                        ) : (
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                            {a.email?.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-white truncate">{a.name || a.email}</span>
+                            {tierLabel && (
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${tierColors[q.tier] || tierColors.free}`}>{tierLabel}</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-zinc-500 truncate">{a.email}</div>
+                        </div>
+                      </div>
+                      <button onClick={() => deleteAccount(a._id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1 shrink-0">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {quotaEntries.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-white/5">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                          {quotaEntries.map(([name, pct]) => {
+                            const short = name.replace(/^models\//, '').replace(/^publishers\/google\/models\//, '');
+                            const barColor = pct > 50 ? 'bg-emerald-500' : pct > 20 ? 'bg-amber-500' : 'bg-red-500';
+                            return (
+                              <div key={name} className="flex items-center gap-2">
+                                <span className="text-[9px] text-zinc-500 truncate w-24 shrink-0">{short}</span>
+                                <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="text-[9px] text-zinc-500 w-7 text-right shrink-0">{pct}%</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <HardDrive className="w-4 h-4 text-zinc-400" />
+            <h2 className="text-sm font-medium text-white">Host Mount Path</h2>
+          </div>
+          <p className="text-[11px] text-zinc-500 mb-4">
+            Set a host directory that all workspaces can access. File operations will be restricted to this path.
+          </p>
+          <div className="bg-zinc-900 border border-white/5 rounded-lg p-4">
+            <label className="block text-[11px] font-medium text-zinc-400 mb-1">Directory Path</label>
+            <div className="flex gap-2">
+              <input
+                value={hostMountPath}
+                onChange={(e) => setHostMountPath(e.target.value)}
+                placeholder="/Users/yourname/projects"
+                className="flex-1 h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 font-mono"
+              />
+              <button
+                onClick={() => setShowHostPicker(true)}
+                className="h-8 px-3 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-white/10 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <FolderOpen className="w-3 h-3" />
+                Browse
+              </button>
+              <button
+                onClick={() => saveHostPath(hostMountPath)}
+                disabled={hostMountLoading}
+                className="h-8 px-3 text-[11px] font-medium bg-indigo-500 text-white hover:bg-indigo-400 rounded-lg transition-colors disabled:opacity-40"
+              >
+                {hostMountLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : hostMountSaved ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+            {hostMountPath && (
+              <p className="text-[10px] text-zinc-500 mt-1.5">
+                All workspace file operations will be scoped to this directory.
+              </p>
+            )}
+          </div>
+          <FolderPickerDialog
+            open={showHostPicker}
+            onClose={() => setShowHostPicker(false)}
+            onSelect={(path) => {
+              setShowHostPicker(false);
+              setHostMountPath(path);
+              saveHostPath(path);
+            }}
+          />
+        </div>
 
         {isNative && (
           <div className="mb-8">
@@ -402,6 +689,6 @@ export default function SettingsPage({ auth, push }) {
           )}
         </div>
       </div>
-    </div>
+    </div >
   );
 }

@@ -113,8 +113,18 @@ async function getValidAccessToken(auth) {
 
 async function fetchWorkspaceQuota(workspace) {
   if (!workspace?.auth?.accessToken) return null;
+  const oldToken = workspace.auth.accessToken;
   const accessToken = await getValidAccessToken(workspace.auth);
   if (!accessToken) return null;
+  if (accessToken !== oldToken && workspace.accountId) {
+    try {
+      const { Account } = await import('./models/account.mjs');
+      await Account.findByIdAndUpdate(workspace.accountId, {
+        accessToken: workspace.auth.accessToken,
+        expiryTimestamp: workspace.auth.expiryTimestamp,
+      });
+    } catch { }
+  }
   const { projectId, tier } = await fetchTierAndProject(accessToken);
   const { quotas, resets } = await fetchQuotas(accessToken, projectId);
   return { tier, projectId, quotas, resets };

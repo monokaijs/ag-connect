@@ -3,12 +3,12 @@ import { useWorkspaces } from '@/hooks/use-workspaces';
 import { useAgConnect } from '@/hooks/use-ag-connect';
 import { useQuota } from '@/hooks/use-quota';
 import ActivityBar from '@/components/activity-bar';
+import WindowTabBar from '@/components/window-tab-bar';
 import HeaderBar from '@/components/header-bar';
 import { InitView, LoginView, ErrorView, StoppedView, EmptyView } from '@/components/workspace-views';
 import Dashboard from '@/components/dashboard';
 import { VncViewer } from '@/components/vnc-viewer';
 import TerminalPanel from '@/components/terminal-panel';
-import GitPanel from '@/components/git-panel';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import CreateWorkspaceDialog from '@/components/create-workspace-dialog';
 import SettingsPage from '@/components/settings-page';
@@ -16,10 +16,10 @@ import OnboardingWizard from '@/components/onboarding-wizard';
 import ServerSetup from '@/components/server-setup';
 import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { isNative } from '@/lib/capacitor';
-import { hasServerEndpoint, setServerEndpoint } from '@/config';
+import { hasServerEndpoint, setServerEndpoint, getApiBase } from '@/config';
 import { Plus, Settings, X } from 'lucide-react';
 import { WORKSPACE_ICONS, ICON_COLORS } from '@/components/create-workspace-dialog';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function App() {
   const [serverReady, setServerReady] = useState(!isNative || hasServerEndpoint());
@@ -71,6 +71,7 @@ function AuthenticatedApp({ auth }) {
   const [showGit, setShowGit] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [activeTargetId, setActiveTargetId] = useState(null);
   const {
     workspaces,
     activeId,
@@ -91,8 +92,66 @@ function AuthenticatedApp({ auth }) {
     ws,
   } = useWorkspaces();
 
-  const ag = useAgConnect(activeWorkspace, ws);
-  const { quota } = useQuota(activeWorkspace, ws);
+  const ag = useAgConnect(activeWorkspace, ws, activeTargetId);
+  const { quota, allQuotas } = useQuota(activeWorkspace, ws);
+
+  const filteredTargets = (ag.targets || []).filter(t => {
+    if (!t.title && !t.url) return false;
+    const title = (t.title || '').toLowerCase();
+    const url = (t.url || '').toLowerCase();
+    if (title.includes('launchpad') || url.includes('launchpad')) return false;
+    if (url.includes('jetski-agent') || url.includes('workbench-jetski')) return false;
+    if (url.startsWith('vscode-file://') && !url.includes('workbench.html')) return false;
+    return true;
+  }).map(t => {
+    let title = t.title || '';
+    if (title.startsWith('vscode-file://')) title = 'Window';
+    title = title.replace(/^Antigravity - /, '').replace(/ - Antigravity$/, '').replace(/^Antigravity$/, 'Window').replace(/[●◉]/g, '').trim();
+    if (title === 'Window' && t.folder) {
+      title = t.folder.split('/').pop() || 'Window';
+    }
+    return { ...t, title: title || 'Window' };
+  });
+
+  const filterIds = filteredTargets.map(t => t.id).join(',');
+  const prevIdsRef = useRef(filterIds);
+
+  useEffect(() => {
+    if (!filteredTargets.length) return;
+    const currentIds = filteredTargets.map(t => t.id);
+    const oldIds = prevIdsRef.current ? prevIdsRef.current.split(',') : [];
+    prevIdsRef.current = currentIds.join(',');
+
+    const newIds = currentIds.filter(id => !oldIds.includes(id));
+
+    setActiveTargetId(prev => {
+      if (newIds.length > 0) return newIds[newIds.length - 1]; // Switch to newest tab
+
+      if (!prev) {
+        const editor = filteredTargets.find(t => t.url?.includes('workbench.html'));
+        if (editor) return editor.id;
+        const wb = filteredTargets.find(t => t.url?.includes('workbench'));
+        return wb ? wb.id : filteredTargets[0].id;
+      }
+
+      if (!filteredTargets.find(t => t.id === prev)) return filteredTargets[0].id;
+      return prev;
+    });
+  }, [filterIds]);
+
+  useEffect(() => {
+    if (activeTargetId && activeWorkspace?.status === 'running') {
+      ag.syncChat(activeTargetId);
+    }
+  }, [activeTargetId]);
+
+  const handleCloseTarget = (targetId) => {
+    ag.closeTarget(targetId);
+    ag.setTargets(prev => prev.filter(x => x.id !== targetId));
+    if (activeTargetId === targetId) {
+      setActiveTargetId(filteredTargets.find(x => x.id !== targetId)?.id || null);
+    }
+  };
 
   const handleCreate = ({ name, icon, color, type }) => {
     createWorkspace(name, '', icon, color, type);
@@ -115,12 +174,12 @@ function AuthenticatedApp({ auth }) {
       case 'initializing':
         return <InitView workspace={activeWorkspace} />;
       case 'needsLogin':
-        return <LoginView workspace={activeWorkspace} onLogin={() => loginWorkspace(activeWorkspace._id)} />;
+        return <LoginView workspace={activeWorkspace} onLogin={() => loginWorkspace(activeWorkspace._id)} onSettings={() => setShowSettings(true)} />;
       case 'running':
         return viewMode === 'vnc' ? (
-          <VncViewer ref={vncRef} workspaceId={activeWorkspace._id} ag={ag} onControlsChange={setVncState} />
+          <VncViewer ref={vncRef} workspaceId={activeWorkspace._id} ag={ag} onControlsChange={setVncState} activeTargetId={activeTargetId} />
         ) : (
-          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} editingFile={editingFile} setEditingFile={setEditingFile} />
+          <Dashboard workspace={activeWorkspace} ag={ag} showHostPanel={showHostPanel} setShowHostPanel={setShowHostPanel} quota={quota} showTerminal={showTerminal} setShowTerminal={setShowTerminal} showGit={showGit} setShowGit={setShowGit} editingFile={editingFile} setEditingFile={setEditingFile} activeTargetId={activeTargetId} />
         );
       case 'stopped':
         return <StoppedView workspace={activeWorkspace} onStart={() => startWorkspace(activeWorkspace._id)} />;
@@ -157,14 +216,39 @@ function AuthenticatedApp({ auth }) {
           <SettingsPage auth={auth} push={push} />
         ) : (
           <>
+            {activeWorkspace && (
+              <WindowTabBar
+                targets={filteredTargets}
+                activeTargetId={activeTargetId}
+                onSelect={setActiveTargetId}
+                onClose={handleCloseTarget}
+                workspace={activeWorkspace}
+                ag={ag}
+                onStart={() => startWorkspace(activeWorkspace._id)}
+                onStop={() => stopWorkspace(activeWorkspace._id)}
+                onRestart={() => restartWorkspace(activeWorkspace._id)}
+                onDelete={() => deleteWorkspace(activeWorkspace._id)}
+                onUpdate={(data) => updateWorkspace(activeWorkspace._id, data)}
+                viewMode={viewMode}
+                setViewMode={setViewMode}
+                showHostPanel={showHostPanel}
+                setShowHostPanel={setShowHostPanel}
+                showTerminal={showTerminal}
+                setShowTerminal={setShowTerminal}
+                onOpenMobileNav={() => setShowMobileNav(true)}
+                onNewWindow={async () => {
+                  try {
+                    const { getAuthHeaders } = await import('@/hooks/use-auth');
+                    await fetch(`${getApiBase()}/api/workspaces/${activeWorkspace._id}/cdp/new-window`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() } });
+                  } catch { }
+                }}
+              />
+            )}
             <HeaderBar
               workspace={activeWorkspace}
               ag={ag}
-              onStart={() => startWorkspace(activeWorkspace?._id)}
-              onStop={() => stopWorkspace(activeWorkspace?._id)}
-              onRestart={() => restartWorkspace(activeWorkspace?._id)}
-              onDelete={() => deleteWorkspace(activeWorkspace?._id)}
               onUpdate={(data) => updateWorkspace(activeWorkspace?._id, data)}
+              onRestart={() => restartWorkspace(activeWorkspace?._id)}
               onClearAuth={() => clearAuth(activeWorkspace?._id)}
               viewMode={viewMode}
               setViewMode={setViewMode}
@@ -173,7 +257,6 @@ function AuthenticatedApp({ auth }) {
               showTerminal={showTerminal}
               setShowTerminal={setShowTerminal}
               quota={quota}
-              onOpenMobileNav={() => setShowMobileNav(true)}
               vncRef={vncRef}
               vncState={vncState}
             />

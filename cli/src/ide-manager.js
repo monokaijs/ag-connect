@@ -124,6 +124,27 @@ class IdeManager {
 
     this._killExisting();
 
+    const extSrc = path.join(__dirname, '..', 'extensions', 'ag-connect-helper');
+    const platform = os.platform();
+    let extDir;
+    if (platform === 'darwin') {
+      extDir = path.join(os.homedir(), '.config', 'Antigravity', 'extensions');
+    } else if (platform === 'win32') {
+      extDir = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'Antigravity', 'extensions');
+    } else {
+      extDir = path.join(os.homedir(), '.config', 'Antigravity', 'extensions');
+    }
+    const extDest = path.join(extDir, 'ag-connect-helper');
+    try {
+      fs.mkdirSync(extDir, { recursive: true });
+      if (fs.existsSync(extSrc)) {
+        fs.cpSync(extSrc, extDest, { recursive: true, force: true });
+        console.log('Installed ag-connect-helper extension');
+      }
+    } catch (e) {
+      console.log('Warning: could not install helper extension:', e.message);
+    }
+
     const folderUri = 'file://' + path.resolve(this.folder);
     console.log('Spawning: ' + bin + ' (CDP port ' + port + ')');
 

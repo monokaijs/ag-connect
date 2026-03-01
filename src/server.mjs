@@ -131,13 +131,14 @@ setupAuthRoutes(app);
 
 app.use('/api/workspaces', requireAuth);
 app.use('/api/settings', requireAuth);
+app.use('/api/accounts', requireAuth);
 app.use('/api/oauth', requireAuth);
 app.use('/api/system', requireAuth);
 
 setupWorkspaceRoutes(app, broadcast);
 setupOAuthRoutes(app, broadcast);
 setupGitRoutes(app);
-setupSettingsRoutes(app);
+setupSettingsRoutes(app, broadcast);
 startConversationMonitor(broadcast);
 startHealthChecker(broadcast);
 setupPushRoutes(app);

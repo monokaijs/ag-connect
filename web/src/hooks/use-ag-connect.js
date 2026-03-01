@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { getApiBase } from '../config';
 import { getAuthHeaders } from './use-auth';
 
-export function useAgConnect(workspace, ws) {
+export function useAgConnect(workspace, ws, activeTargetId) {
   const [status, setStatus] = useState('disconnected');
   const [statusText, setStatusText] = useState('');
   const [currentModel, setCurrentModel] = useState(workspace?.gpi?.selectedModel || '');
@@ -12,6 +12,11 @@ export function useAgConnect(workspace, ws) {
   const [hasAcceptAll, setHasAcceptAll] = useState(false);
   const [hasRejectAll, setHasRejectAll] = useState(false);
   const [targets, setTargets] = useState([]);
+  const activeTargetRef = useRef(activeTargetId);
+
+  useEffect(() => {
+    activeTargetRef.current = activeTargetId;
+  }, [activeTargetId]);
 
   const workspaceId = workspace?._id;
   const apiBase = `${getApiBase()}/api/workspaces/${workspaceId}`;
@@ -28,7 +33,9 @@ export function useAgConnect(workspace, ws) {
   }, [workspaceId, apiBase]);
 
   const sendMessage = useCallback(async (text) => {
-    return api('POST', '/cdp/send', { text });
+    const body = { text };
+    if (activeTargetRef.current) body.targetId = activeTargetRef.current;
+    return api('POST', '/cdp/send', body);
   }, [api]);
 
   const stopAgent = useCallback(async () => {
@@ -54,25 +61,30 @@ export function useAgConnect(workspace, ws) {
 
   const clickNewChat = useCallback(async () => {
     setItems([]);
-    return api('POST', '/cdp/new-chat', {});
+    const body = {};
+    if (activeTargetRef.current) body.targetId = activeTargetRef.current;
+    return api('POST', '/cdp/new-chat', body);
   }, [api]);
 
-  const fetchConversations = useCallback(async () => {
-    return api('GET', '/cdp/conversations');
+  const fetchConversations = useCallback(async (folder) => {
+    const qs = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+    return api('GET', `/cdp/conversations${qs}`);
   }, [api]);
 
   const captureScreenshot = useCallback(async () => {
     return api('GET', '/cdp/screenshot');
   }, [api]);
 
-  const fetchChat = useCallback(async () => {
-    return api('GET', '/cdp/conversation');
+  const fetchChat = useCallback(async (targetId) => {
+    const tid = targetId || activeTargetRef.current;
+    const qs = tid ? `?targetId=${encodeURIComponent(tid)}` : '';
+    return api('GET', `/cdp/conversation${qs}`);
   }, [api]);
 
-  const syncChat = useCallback(async () => {
+  const syncChat = useCallback(async (targetId) => {
     setIsLoading(true);
     try {
-      const msg = await fetchChat();
+      const msg = await fetchChat(targetId);
       if (msg && msg.items) {
         setItems(msg.items || []);
         setStatusText(msg.statusText || '');
@@ -92,10 +104,13 @@ export function useAgConnect(workspace, ws) {
     return api('POST', '/cdp/targets/close', { targetId });
   }, [api]);
 
-  const selectConversation = useCallback(async (title) => {
+  const selectConversation = useCallback(async (title, cascadeId) => {
     setItems([]);
     setIsLoading(true);
-    await api('POST', '/cdp/conversations/select', { title });
+    const body = { title };
+    if (cascadeId) body.cascadeId = cascadeId;
+    if (activeTargetRef.current) body.targetId = activeTargetRef.current;
+    await api('POST', '/cdp/conversations/select', body);
     await syncChat();
   }, [api, syncChat]);
 
@@ -107,6 +122,7 @@ export function useAgConnect(workspace, ws) {
     setHasRejectAll(false);
     setCurrentModel('');
     setStatus('disconnected');
+    setTargets([]);
   }, [workspaceId]);
 
   useEffect(() => {
@@ -139,6 +155,10 @@ export function useAgConnect(workspace, ws) {
       try {
         const msg = JSON.parse(e.data);
         if (msg.event === 'conversation:update' && msg.payload?.id === workspaceId) {
+          const payloadTarget = msg.payload.targetId;
+          const currentTarget = activeTargetRef.current;
+          if (payloadTarget && currentTarget && payloadTarget !== currentTarget) return;
+          if (!payloadTarget && currentTarget) return;
           setItems(msg.payload.items || []);
           setStatusText(msg.payload.statusText || '');
           setIsBusy(!!msg.payload.isBusy);
@@ -154,6 +174,18 @@ export function useAgConnect(workspace, ws) {
     return () => ws.removeEventListener('message', handler);
   }, [ws, workspaceId]);
 
+  const openFolder = useCallback(async (folderPath) => {
+    return api('POST', '/cdp/open-folder', { folderPath });
+  }, [api]);
+
+  const openFolderNewWindow = useCallback(async (folderPath) => {
+    return api('POST', '/cdp/open-folder-new-window', { folderPath });
+  }, [api]);
+
+  const openHistory = useCallback(async () => {
+    return api('POST', '/cdp/history', {});
+  }, [api]);
+
   return {
     status, statusText, currentModel, setCurrentModel,
     isBusy, isLoading, items, hasAcceptAll, hasRejectAll,
@@ -162,6 +194,7 @@ export function useAgConnect(workspace, ws) {
     clickAcceptAll, clickRejectAll,
     clickNewChat, fetchConversations, selectConversation,
     captureScreenshot, fetchTargets, closeTarget, targets, setTargets,
+    openFolder, openFolderNewWindow, openHistory,
     api, syncChat,
   };
 }
