@@ -643,6 +643,7 @@ export async function gpiBootstrap(workspace) {
       );
 
       let foundCsrf = null;
+      const targetInfo = {};
       for (const t of workbenchTargets) {
         try {
           const results = await connectAndEval(t.wsUrl, validateExpr, 15000);
@@ -650,6 +651,7 @@ export async function gpiBootstrap(workspace) {
           if (val?.ok && val?.csrf) {
             console.log(`[GPI] Target ${t.id.substring(0, 8)} -> csrf=${val.csrf.substring(0, 8)} lsUrl=${val.lsUrl}`);
             if (!foundCsrf) foundCsrf = val.csrf;
+            targetInfo[t.id] = { csrf: val.csrf, lsUrl: val.lsUrl };
           }
         } catch { }
       }
@@ -661,6 +663,7 @@ export async function gpiBootstrap(workspace) {
           lsUrl,
           hasCsrf: true,
           installed: true,
+          targetInfo,
         };
       }
     }
@@ -674,7 +677,11 @@ export async function gpiSendMessage(workspace, cascadeId, message, model, targe
   return gpiEval(workspace, buildSendExpr(cascadeId, message, model), targetId);
 }
 
+const targetInfoCache = new Map();
 
+export function setTargetInfo(workspaceId, targetInfo) {
+  targetInfoCache.set(workspaceId.toString(), targetInfo || {});
+}
 
 const cascadeCache = new Map();
 
@@ -700,11 +707,11 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
     return { ok: false, error: 'no_container' };
   }
 
-  const csrf = workspace.gpi?.csrfToken;
-  const lsPort = workspace.gpi?.lsPort;
-  const lsUrl = lsPort ? `https://127.0.0.1:${lsPort}` : null;
+  const perTarget = targetInfoCache.get(workspace._id.toString())?.[targetId];
+  const csrf = perTarget?.csrf || workspace.gpi?.csrfToken;
+  const lsUrl = perTarget?.lsUrl || (workspace.gpi?.lsPort ? `https://127.0.0.1:${workspace.gpi.lsPort}` : null);
   if (!csrf || !lsUrl) {
-    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsPort=${lsPort}`);
+    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsUrl=${!!lsUrl} target=${targetId?.slice(0, 8)}`);
     return { ok: false, error: 'no_csrf_or_ls' };
   }
 

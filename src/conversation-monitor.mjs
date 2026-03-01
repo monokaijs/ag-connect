@@ -4,6 +4,7 @@ import {
   gpiGetAllTrajectories,
   gpiReadCachedTrajectory,
   gpiStartCascadeWatcher,
+  setTargetInfo,
   trajectoryToConversation,
 } from './gpi.mjs';
 import { getTargetsOnPort, getTargetWorkspaceFolders, connectAndEval, FOLDER_EXPR } from './workspace-cdp.mjs';
@@ -65,6 +66,9 @@ class WorkspaceMonitor {
         if (Object.keys(dbUpdate).length > 0) {
           await Workspace.findByIdAndUpdate(this.wsId, dbUpdate);
           this.workspace = await Workspace.findById(this.wsId);
+        }
+        if (result.targetInfo) {
+          setTargetInfo(this.wsId, result.targetInfo);
         }
       }
     } catch (err) {
