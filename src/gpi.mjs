@@ -685,14 +685,50 @@ export function setTargetInfo(workspaceId, targetInfo) {
 
 const cascadeCache = new Map();
 
-function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
-  const cmd = `docker exec ${containerId} curl -sk "${lsUrl}${LS_PREFIX}/${endpoint}" -H "content-type: application/json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" -d '${JSON.stringify(body)}' 2>/dev/null`;
-  return new Promise((resolve) => {
-    exec(cmd, { timeout: 5000 }, (err, stdout) => {
-      if (err || !stdout) return resolve(null);
-      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
-    });
+let _dockerode = null;
+async function getDockerode() {
+  if (_dockerode) return _dockerode;
+  const { default: Dockerode } = await import('dockerode');
+  const { existsSync } = await import('fs');
+  const { homedir } = await import('os');
+  const socketPaths = [
+    process.env.DOCKER_SOCKET,
+    '/var/run/docker.sock',
+    `${homedir()}/.colima/default/docker.sock`,
+  ].filter(Boolean);
+  const socketPath = socketPaths.find(p => existsSync(p)) || '/var/run/docker.sock';
+  _dockerode = new Dockerode({ socketPath });
+  return _dockerode;
+}
+
+async function dockerExecRun(containerId, cmd) {
+  const docker = await getDockerode();
+  const container = docker.getContainer(containerId);
+  const e = await container.exec({
+    Cmd: ['bash', '-c', cmd],
+    AttachStdout: true,
+    AttachStderr: true,
   });
+  const stream = await e.start({ hijack: true, stdin: false });
+  return new Promise((resolve) => {
+    let data = '';
+    stream.on('data', (chunk) => { data += chunk.toString(); });
+    stream.on('end', () => resolve(data));
+    setTimeout(() => resolve(data), 5000);
+  });
+}
+
+async function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
+  try {
+    const cmd = `curl -sk "${lsUrl}${LS_PREFIX}/${endpoint}" -H "content-type: application/json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" -d '${JSON.stringify(body)}' 2>/dev/null`;
+    const out = await dockerExecRun(containerId, cmd);
+    const cleaned = out.replace(/[\x00-\x08\x0e-\x1f]/g, '');
+    const jsonStart = cleaned.indexOf('{');
+    if (jsonStart < 0) return null;
+    return JSON.parse(cleaned.slice(jsonStart));
+  } catch {
+    return null;
+  }
 }
 
 const lsDiscoveryCache = new Map();
@@ -708,9 +744,7 @@ async function findLsForCascade(containerId, cascadeId) {
 
     const ports = [];
     try {
-      const portOut = await new Promise((resolve) => {
-        exec(`docker exec ${containerId} cat /proc/1/net/tcp`, { timeout: 5000 }, (err, stdout) => resolve(stdout || ''));
-      });
+      const portOut = await dockerExecRun(containerId, 'cat /proc/1/net/tcp');
       for (const line of portOut.split('\n').slice(1)) {
         const parts = line.trim().split(/\s+/);
         if (parts[3] === '0A') {
