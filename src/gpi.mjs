@@ -700,10 +700,11 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
     return { ok: false, error: 'no_container' };
   }
 
-  const csrf = workspace.gpi?.csrf;
-  const lsUrl = workspace.gpi?.lsUrl;
+  const csrf = workspace.gpi?.csrfToken;
+  const lsPort = workspace.gpi?.lsPort;
+  const lsUrl = lsPort ? `https://127.0.0.1:${lsPort}` : null;
   if (!csrf || !lsUrl) {
-    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsUrl=${!!lsUrl} gpi=${JSON.stringify(workspace.gpi || {}).substring(0, 200)}`);
+    console.log(`[GPI] Watcher failed: csrf=${!!csrf} lsPort=${lsPort}`);
     return { ok: false, error: 'no_csrf_or_ls' };
   }
 

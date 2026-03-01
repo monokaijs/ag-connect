@@ -50,8 +50,14 @@ class WorkspaceMonitor {
         this.bootstrapped = true;
         console.log(`[GPI] Bootstrap for ${this.wsId}: csrf=${!!result.csrf}`);
         const dbUpdate = {};
-        if (result.csrf) dbUpdate['gpi.csrf'] = result.csrf;
-        if (result.lsUrl) dbUpdate['gpi.lsUrl'] = result.lsUrl;
+        if (result.csrf) dbUpdate['gpi.csrfToken'] = result.csrf;
+        if (result.lsUrl) {
+          try {
+            const u = new URL(result.lsUrl);
+            dbUpdate['gpi.lsHost'] = u.hostname;
+            dbUpdate['gpi.lsPort'] = parseInt(u.port);
+          } catch { }
+        }
         if (result.modelUid) {
           dbUpdate['gpi.selectedModelUid'] = result.modelUid;
           console.log(`[GPI] Captured modelUid for ${this.wsId}: ${result.modelUid.substring(0, 20)}`);
