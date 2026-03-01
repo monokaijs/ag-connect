@@ -710,9 +710,13 @@ async function dockerExecRun(containerId, cmd) {
     AttachStderr: true,
   });
   const stream = await e.start({ hijack: true, stdin: false });
+  const { PassThrough } = await import('stream');
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  docker.modem.demuxStream(stream, stdout, stderr);
   return new Promise((resolve) => {
     let data = '';
-    stream.on('data', (chunk) => { data += chunk.toString(); });
+    stdout.on('data', (chunk) => { data += chunk.toString(); });
     stream.on('end', () => resolve(data));
     setTimeout(() => resolve(data), 5000);
   });
