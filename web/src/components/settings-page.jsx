@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu } from 'lucide-react';
 import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 import { isNative } from '@/lib/capacitor';
@@ -10,7 +10,7 @@ function authFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers });
 }
 
-export default function SettingsPage({ auth, push }) {
+export default function SettingsPage({ auth, push, onOpenMobileNav }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -249,8 +249,14 @@ export default function SettingsPage({ auth, push }) {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-y-auto">
+      <div className="md:hidden flex items-center gap-3 px-4 h-11 border-b border-white/5 shrink-0">
+        <button onClick={onOpenMobileNav} className="text-zinc-400 hover:text-white transition-colors">
+          <Menu className="w-5 h-5" />
+        </button>
+        <span className="text-sm font-semibold text-white">Settings</span>
+      </div>
       <div className="max-w-2xl mx-auto w-full p-6">
-        <h1 className="text-lg font-semibold text-white mb-1">Settings</h1>
+        <h1 className="text-lg font-semibold text-white mb-1 hidden md:block">Settings</h1>
         <p className="text-xs text-zinc-500 mb-6">Manage your AG Connect configuration</p>
 
         {auth?.user && (
