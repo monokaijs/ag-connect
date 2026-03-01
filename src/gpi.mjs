@@ -674,11 +674,38 @@ export async function gpiSendMessage(workspace, cascadeId, message, model, targe
 }
 
 export async function gpiGetTrajectory(workspace, cascadeId) {
-  return gpiEval(workspace, buildGetTrajectoryExpr(cascadeId));
+  const expr = buildGetTrajectoryExpr(cascadeId);
+  const result = await evalForWorkspace(workspace, expr, {
+    target: 'workbench',
+    timeout: 15000,
+    allTargets: true,
+  });
+  if (!result.ok) return result;
+  const best = result.results?.find(r => r.value?.ok)?.value || result.results?.[0]?.value;
+  return best || { ok: false, error: 'no_result' };
 }
 
 export async function gpiGetAllTrajectories(workspace) {
-  return gpiEval(workspace, buildGetAllTrajectoriesExpr());
+  const expr = buildGetAllTrajectoriesExpr();
+  const result = await evalForWorkspace(workspace, expr, {
+    target: 'workbench',
+    timeout: 15000,
+    allTargets: true,
+  });
+  if (!result.ok) return result;
+
+  const merged = {};
+  for (const r of (result.results || [])) {
+    const summaries = r.value?.data?.trajectorySummaries || {};
+    for (const [k, v] of Object.entries(summaries)) {
+      merged[k] = v;
+    }
+  }
+  const best = result.results?.find(r => r.value?.ok)?.value || result.results?.[0]?.value;
+  if (best) {
+    return { ...best, data: { ...best.data, trajectorySummaries: merged } };
+  }
+  return { ok: false, error: 'no_result' };
 }
 
 export async function gpiStartCascade(workspace, modelUid, targetId) {
