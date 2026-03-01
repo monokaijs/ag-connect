@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu, Lock, Wand2, Copy, Check, Shield } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu, Lock, Wand2, Copy, Check, Shield, Box, Play, Square, RotateCw, Pencil } from 'lucide-react';
 import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 import { isNative } from '@/lib/capacitor';
@@ -12,6 +12,7 @@ function authFetch(url, opts = {}) {
 
 const TABS = [
   { id: 'general', label: 'General', icon: User },
+  { id: 'workspaces', label: 'Workspaces', icon: Box },
   { id: 'accounts', label: 'Accounts', icon: LogIn },
   { id: 'ssh', label: 'SSH Keys', icon: Key },
   { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -49,6 +50,12 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
+  const [workspaces, setWorkspaces] = useState([]);
+  const [wsLoading, setWsLoading] = useState(true);
+  const [wsActioning, setWsActioning] = useState(null);
+  const [editingWs, setEditingWs] = useState(null);
+  const [editingName, setEditingName] = useState('');
+
   const fetchKeys = useCallback(async () => {
     try {
       const res = await authFetch(`${getApiBase()}/api/settings/ssh-keys`);
@@ -66,7 +73,16 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
     } catch { }
   }, []);
 
-  useEffect(() => { fetchKeys(); fetchFirebaseStatus(); fetchAccounts(); }, [fetchKeys, fetchFirebaseStatus]);
+  const fetchWorkspaces = useCallback(async () => {
+    try {
+      const res = await authFetch(`${getApiBase()}/api/workspaces`);
+      const data = await res.json();
+      if (Array.isArray(data)) setWorkspaces(data);
+    } catch { }
+    setWsLoading(false);
+  }, []);
+
+  useEffect(() => { fetchKeys(); fetchFirebaseStatus(); fetchAccounts(); fetchWorkspaces(); }, [fetchKeys, fetchFirebaseStatus, fetchWorkspaces]);
 
   const [googleAccounts, setGoogleAccounts] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
@@ -322,6 +338,38 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
     setTimeout(() => setCopiedPub(null), 2000);
   };
 
+  const wsAction = async (id, action) => {
+    setWsActioning(id);
+    try {
+      await authFetch(`${getApiBase()}/api/workspaces/${id}/${action}`, { method: 'POST' });
+      fetchWorkspaces();
+    } catch { }
+    setWsActioning(null);
+  };
+
+  const deleteWorkspace = async (id) => {
+    if (!confirm('Delete this workspace? This will remove the container and all data.')) return;
+    setWsActioning(id);
+    try {
+      await authFetch(`${getApiBase()}/api/workspaces/${id}`, { method: 'DELETE' });
+      fetchWorkspaces();
+    } catch { }
+    setWsActioning(null);
+  };
+
+  const renameWorkspace = async (id) => {
+    if (!editingName.trim()) return;
+    try {
+      await authFetch(`${getApiBase()}/api/workspaces/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editingName.trim() }),
+      });
+      setEditingWs(null);
+      fetchWorkspaces();
+    } catch { }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-y-auto">
       <div className="md:hidden flex items-center gap-3 px-4 h-11 border-b border-white/5 shrink-0 sticky top-0 z-20 bg-zinc-950/95 backdrop-blur-sm">
@@ -343,8 +391,8 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${activeTab === tab.id
-                    ? 'bg-white/10 text-white shadow-sm'
-                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+                  ? 'bg-white/10 text-white shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
                   }`}
               >
                 <Icon className="w-3 h-3" />
@@ -396,6 +444,7 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
                       type="password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter current password"
                       className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
                     />
                   </div>
@@ -405,6 +454,7 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
                       type="password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Enter new password"
                       className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
                     />
                   </div>
@@ -414,6 +464,7 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password"
                       className="w-full h-8 px-3 text-xs bg-zinc-800 border border-white/10 rounded-lg text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500/50"
                     />
                   </div>
@@ -509,6 +560,114 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
               </div>
             )}
           </>
+        )}
+        {activeTab === 'workspaces' && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Box className="w-4 h-4 text-zinc-400" />
+                <h2 className="text-sm font-medium text-white">Workspaces</h2>
+                <span className="text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">{workspaces.length}</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-zinc-500 mb-4">Manage your workspace containers. Start, stop, restart, or remove workspaces.</p>
+
+            {wsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+              </div>
+            ) : workspaces.length === 0 ? (
+              <div className="text-center py-8 text-zinc-600">
+                <Box className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No workspaces created</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {workspaces.map(ws => {
+                  const statusColors = {
+                    running: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+                    stopped: 'text-zinc-400 bg-zinc-700/50 border-zinc-600/30',
+                    creating: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+                    initializing: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+                    needsLogin: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+                    error: 'text-red-400 bg-red-500/10 border-red-500/20',
+                  };
+                  const isActioning = wsActioning === ws._id;
+                  const isEditing = editingWs === ws._id;
+                  return (
+                    <div key={ws._id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <Box className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  value={editingName}
+                                  onChange={(e) => setEditingName(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') renameWorkspace(ws._id); if (e.key === 'Escape') setEditingWs(null); }}
+                                  autoFocus
+                                  className="flex-1 h-6 px-2 text-xs bg-zinc-800 border border-indigo-500/50 rounded text-white outline-none"
+                                />
+                                <button onClick={() => renameWorkspace(ws._id)} className="text-emerald-400 hover:text-emerald-300 p-0.5"><Check className="w-3 h-3" /></button>
+                                <button onClick={() => setEditingWs(null)} className="text-zinc-500 hover:text-zinc-300 p-0.5"><XCircle className="w-3 h-3" /></button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-white truncate">{ws.name || 'Unnamed'}</span>
+                                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${statusColors[ws.status] || statusColors.stopped}`}>
+                                  {ws.status}
+                                </span>
+                                {ws.type === 'cli' && (
+                                  <span className="text-[9px] text-zinc-500 bg-zinc-800 px-1 py-0.5 rounded">CLI</span>
+                                )}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+                              {ws.auth?.email || 'No account assigned'}
+                              {ws.mountedPath && <span className="ml-2 text-zinc-600">· {ws.mountedPath}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0 ml-2">
+                          {isActioning ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => { setEditingWs(ws._id); setEditingName(ws.name || ''); }}
+                                className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-indigo-400 transition-all p-1"
+                                title="Rename"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              {ws.status === 'stopped' ? (
+                                <button onClick={() => wsAction(ws._id, 'start')} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-emerald-400 transition-all p-1" title="Start">
+                                  <Play className="w-3 h-3" />
+                                </button>
+                              ) : ws.status === 'running' ? (
+                                <>
+                                  <button onClick={() => wsAction(ws._id, 'restart')} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-amber-400 transition-all p-1" title="Restart">
+                                    <RotateCw className="w-3 h-3" />
+                                  </button>
+                                  <button onClick={() => wsAction(ws._id, 'stop')} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-orange-400 transition-all p-1" title="Stop">
+                                    <Square className="w-3 h-3" />
+                                  </button>
+                                </>
+                              ) : null}
+                              <button onClick={() => deleteWorkspace(ws._id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1" title="Delete">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
 
         {activeTab === 'accounts' && (
