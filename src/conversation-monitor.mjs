@@ -49,9 +49,16 @@ class WorkspaceMonitor {
       if (result?.csrf || result?.installed) {
         this.bootstrapped = true;
         console.log(`[GPI] Bootstrap for ${this.wsId}: csrf=${!!result.csrf}`);
+        const dbUpdate = {};
+        if (result.csrf) dbUpdate['gpi.csrf'] = result.csrf;
+        if (result.lsUrl) dbUpdate['gpi.lsUrl'] = result.lsUrl;
         if (result.modelUid) {
-          await Workspace.findByIdAndUpdate(this.wsId, { 'gpi.selectedModelUid': result.modelUid });
+          dbUpdate['gpi.selectedModelUid'] = result.modelUid;
           console.log(`[GPI] Captured modelUid for ${this.wsId}: ${result.modelUid.substring(0, 20)}`);
+        }
+        if (Object.keys(dbUpdate).length > 0) {
+          await Workspace.findByIdAndUpdate(this.wsId, dbUpdate);
+          this.workspace = await Workspace.findById(this.wsId);
         }
       }
     } catch (err) {
