@@ -1,7 +1,6 @@
 import { Workspace } from './models/workspace.mjs';
 import {
   gpiBootstrap,
-  gpiGetTrajectory,
   gpiGetAllTrajectories,
   gpiReadCachedTrajectory,
   trajectoryToConversation,
@@ -139,19 +138,15 @@ class WorkspaceMonitor {
       let trajData = null;
       if (cachedTargetId) {
         const cached = await gpiReadCachedTrajectory(this.workspace, cachedTargetId);
-        if (cached && cached.cascadeId === cascadeId && cached.data && (Date.now() - cached.ts) < 30000) {
+        if (cached && cached.cascadeId === cascadeId && cached.data) {
           trajData = cached.data;
         }
       }
 
       if (!trajData) {
-        const result = await gpiGetTrajectory(this.workspace, cascadeId);
-        if (!result.ok) {
-          this.polling = false;
-          this.schedulePoll();
-          return;
-        }
-        trajData = result.data;
+        this.polling = false;
+        this.schedulePoll();
+        return;
       }
 
       const data = trajectoryToConversation(trajData);
@@ -219,9 +214,9 @@ class WorkspaceMonitor {
         for (const [tid, tcid] of targetCascades) {
           if (tcid === cascadeId) continue;
           try {
-            const tResult = await gpiGetTrajectory(this.workspace, tcid);
-            if (!tResult.ok) continue;
-            const tData = trajectoryToConversation(tResult.data);
+            const cached = await gpiReadCachedTrajectory(this.workspace, tid);
+            if (!cached || !cached.data) continue;
+            const tData = trajectoryToConversation(cached.data);
             const tHash = `${tData.turnCount}:${tData.isBusy}:${tData.items.length}`;
             const prevTHash = lastHash.get(`${this.wsId}:${tid}`);
             if (prevTHash !== tHash) {
