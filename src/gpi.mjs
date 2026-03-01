@@ -487,6 +487,44 @@ export async function gpiBootstrap(workspace) {
 
   if (workspace.type === 'cli') {
     try {
+      const csrfFileContents = await cliExec(workspace._id.toString(), 'cat /tmp/ag-connect-csrf.json 2>/dev/null', 3000).catch(() => '');
+      if (csrfFileContents) {
+        try {
+          const parsed = JSON.parse(csrfFileContents);
+          if (parsed.tokens?.length) {
+            console.log(`[GPI] CSRF file found ${parsed.tokens.length} tokens: ${parsed.tokens.map(t => t.csrf.substring(0, 8) + ':' + (t.grpcPort || '?')).join(', ')}`);
+            const lsPortResult = await evalForWorkspace(workspace, `(()=>{const p=performance.getEntriesByType('resource');for(let i=p.length-1;i>=0;i--)if(p[i].name.includes('LanguageServerService'))return new URL(p[i].name).port;return null})()`, {
+              target: 'workbench',
+              timeout: 5000,
+            });
+            const lsPort = lsPortResult.results?.[0]?.value;
+            console.log(`[GPI] LS port from performance: ${lsPort}`);
+
+            let matchedToken = null;
+            if (lsPort) {
+              matchedToken = parsed.tokens.find(t => t.grpcPort === String(lsPort) || t.extPort === String(lsPort));
+            }
+            if (!matchedToken) matchedToken = parsed.tokens[parsed.tokens.length - 1];
+
+            if (matchedToken) {
+              console.log(`[GPI] Using matched token: ${matchedToken.csrf.substring(0, 8)}.. port=${matchedToken.grpcPort || matchedToken.extPort}`);
+              await evalForWorkspace(workspace, `window.__gpiCsrf = ${JSON.stringify(matchedToken.csrf)}`, {
+                target: 'workbench',
+                timeout: 5000,
+              });
+              return {
+                ok: true,
+                csrf: matchedToken.csrf,
+                hasCsrf: true,
+                installed: true,
+              };
+            }
+          }
+        } catch { }
+      }
+    } catch { }
+
+    try {
       const psOutput = await cliExec(workspace._id.toString(), 'ps aux 2>/dev/null || tasklist 2>nul', 5000);
       const csrfMatch = psOutput.match(/--csrf_token\s+([a-f0-9-]+)/);
       const portMatch = psOutput.match(/--extension_server_port\s+(\d+)/);
