@@ -673,128 +673,80 @@ export async function gpiSendMessage(workspace, cascadeId, message, model, targe
   return gpiEval(workspace, buildSendExpr(cascadeId, message, model), targetId);
 }
 
-function buildStartWatcherExpr(cascadeId) {
+function buildStartWatcherExpr() {
   return `(async () => {
     try {
-      if (window.__gpiWatcherAbort) { try { window.__gpiWatcherAbort.abort(); } catch {} }
-      const ac = new AbortController();
-      window.__gpiWatcherAbort = ac;
-
-      const perf = performance.getEntriesByType('resource');
-      let lsUrl = null;
-      for (let i = perf.length - 1; i >= 0; i--) {
-        if (perf[i].name.includes('LanguageServerService')) {
-          lsUrl = new URL(perf[i].name).origin;
-          break;
-        }
-      }
-      if (!lsUrl) return { ok: false, error: 'no_ls' };
-      const csrf = window.__gpiCsrf;
-      if (!csrf) return { ok: false, error: 'no_csrf' };
-
-      const jsonBody = JSON.stringify({protocolVersion:1,id:${JSON.stringify(cascadeId)},subscriberId:'ag-connect'});
-      const bodyBytes = new TextEncoder().encode(jsonBody);
-      const envelope = new Uint8Array(5 + bodyBytes.length);
-      envelope[0] = 0;
-      const len = bodyBytes.length;
-      envelope[1] = (len >> 24) & 0xff;
-      envelope[2] = (len >> 16) & 0xff;
-      envelope[3] = (len >> 8) & 0xff;
-      envelope[4] = len & 0xff;
-      envelope.set(bodyBytes, 5);
+      if (window.__gpiWatcherInstalled) return { ok: true, already: true };
+      window.__gpiWatcherInstalled = true;
+      window.__gpiCascade = null;
 
       const origFetch = window.__origFetch || window.fetch;
+      const LS = '${LS_PREFIX}';
 
-      window.__gpiCascade = { cascadeId: ${JSON.stringify(cascadeId)}, isBusy: true, ts: Date.now(), status: 'connecting' };
+      window.fetch = async function(...args) {
+        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+        const res = await origFetch.apply(this, args);
 
-      const fetchTrajectory = async () => {
-        try {
-          const headers = window.__gpiHeaders
-            ? { ...window.__gpiHeaders, 'content-type': 'application/json', 'x-codeium-csrf-token': csrf }
-            : { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': csrf };
-          const r = await origFetch(lsUrl + '${LS_PREFIX}/GetCascadeTrajectory', {
-            method: 'POST', headers, body: JSON.stringify({cascadeId: ${JSON.stringify(cascadeId)}}),
-          });
-          return await r.json();
-        } catch { return null; }
+        if (url.includes(LS + '/GetCascadeTrajectory')) {
+          try {
+            const clone = res.clone();
+            clone.json().then(data => {
+              if (data?.trajectory) {
+                const steps = data.trajectory.steps || [];
+                const last = steps[steps.length - 1];
+                const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
+                window.__gpiCascade = {
+                  cascadeId: data.trajectory.cascadeId,
+                  data: data,
+                  isBusy: busy,
+                  ts: Date.now(),
+                  status: busy ? 'busy' : 'idle',
+                };
+              }
+            }).catch(() => {});
+          } catch {}
+        }
+
+        if (url.includes(LS + '/StreamCascadeReactiveUpdates') && res.body) {
+          try {
+            const [s1, s2] = res.body.tee();
+            const reader = s2.getReader();
+            const pump = async () => {
+              try {
+                while (true) {
+                  const { done } = await reader.read();
+                  if (done) break;
+                  if (window.__gpiCascade) {
+                    window.__gpiCascade = { ...window.__gpiCascade, streamActive: true, lastStreamTs: Date.now() };
+                  }
+                }
+              } catch {}
+            };
+            pump();
+            return new Response(s1, { headers: res.headers, status: res.status, statusText: res.statusText });
+          } catch {}
+        }
+
+        return res;
       };
 
-      const streamRes = await origFetch(lsUrl + '${LS_PREFIX}/StreamCascadeReactiveUpdates', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/connect+json',
-          'connect-protocol-version': '1',
-          'x-codeium-csrf-token': csrf,
-        },
-        body: envelope,
-        signal: ac.signal,
-      });
-
-      if (!streamRes.ok) {
-        window.__gpiCascade = { cascadeId: ${JSON.stringify(cascadeId)}, isBusy: false, error: 'stream_failed', ts: Date.now() };
-        return { ok: false, error: 'stream_' + streamRes.status };
-      }
-
-      const reader = streamRes.body.getReader();
-      let buf = new Uint8Array(0);
-      let updateCount = 0;
-
-      const processMessages = async () => {
-        while (buf.length >= 5) {
-          const flags = buf[0];
-          const msgLen = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
-          if (buf.length < 5 + msgLen) break;
-          buf = buf.slice(5 + msgLen);
-          const isEnd = (flags & 0x02) !== 0;
-          if (isEnd) {
-            const traj = await fetchTrajectory();
-            window.__gpiCascade = { cascadeId: ${JSON.stringify(cascadeId)}, data: traj, isBusy: false, ts: Date.now(), status: 'ended', updates: updateCount };
-            return true;
-          }
-          updateCount++;
-          if (updateCount <= 2 || updateCount % 3 === 0) {
-            const traj = await fetchTrajectory();
-            if (traj) {
-              const steps = traj.trajectory?.steps || [];
-              const last = steps[steps.length - 1];
-              const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
-              window.__gpiCascade = { cascadeId: ${JSON.stringify(cascadeId)}, data: traj, isBusy: busy, ts: Date.now(), status: 'streaming', updates: updateCount };
-            }
-          }
-        }
-        return false;
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          const traj = await fetchTrajectory();
-          window.__gpiCascade = { cascadeId: ${JSON.stringify(cascadeId)}, data: traj, isBusy: false, ts: Date.now(), status: 'closed', updates: updateCount };
-          break;
-        }
-        const newBuf = new Uint8Array(buf.length + value.length);
-        newBuf.set(buf);
-        newBuf.set(value, buf.length);
-        buf = newBuf;
-        const ended = await processMessages();
-        if (ended) break;
-      }
-      return { ok: true, started: true };
+      window.__origFetch = origFetch;
+      return { ok: true, installed: true };
     } catch(e) {
-      window.__gpiCascade = { isBusy: false, error: e.message, ts: Date.now() };
       return { ok: false, error: e.message };
     }
   })()`
 }
 
 export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
-  const expr = buildStartWatcherExpr(cascadeId);
-  evalForWorkspace(workspace, expr, {
+  const expr = buildStartWatcherExpr();
+  const result = await evalForWorkspace(workspace, expr, {
     targetId,
     target: 'workbench',
-    timeout: 300000,
-  }).catch(() => { });
-  return { ok: true };
+    timeout: 10000,
+  });
+  console.log(`[GPI] Watcher install on target ${(targetId || 'global').slice(0, 8)}: ${JSON.stringify(result?.results?.[0]?.value || result).substring(0, 200)}`);
+  return result;
 }
 
 export async function gpiReadCachedTrajectory(workspace, targetId) {
