@@ -1,7 +1,7 @@
 import { cdpEvalOnPort, cdpEvalOnAllTargets, getTargetsOnPort, connectAndEval } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
 import { DEFAULT_MODEL_UID } from './config.mjs';
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -695,27 +695,8 @@ function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
   });
 }
 
-function startStreamConnection(containerId, lsUrl, csrf, cascadeId, state) {
-  const json = JSON.stringify({ protocolVersion: 1, id: cascadeId, subscriberId: 'ag-connect' });
-  const len = Buffer.byteLength(json);
-  const envelope = Buffer.alloc(5 + len);
-  envelope[0] = 0;
-  envelope.writeUInt32BE(len, 1);
-  envelope.write(json, 5);
-  const tmpFile = `/tmp/gpi_stream_${cascadeId.slice(0, 8)}`;
-
-  const writeEnvelope = spawn('docker', [
-    'exec', '-i', containerId, 'bash', '-c',
-    `cat > ${tmpFile} && curl -sk "${lsUrl}${LS_PREFIX}/StreamCascadeReactiveUpdates" -H "content-type: application/connect+json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" --data-binary @${tmpFile} -N 2>/dev/null`
-  ]);
-
-  writeEnvelope.stdin.write(envelope);
-  writeEnvelope.stdin.end();
-
-  let pending = false;
+function startWatcherLoop(containerId, lsUrl, csrf, cascadeId, state) {
   const fetchAndCache = async () => {
-    if (pending || !state._watcherRunning) return;
-    pending = true;
     try {
       const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId });
       if (data?.trajectory) {
@@ -728,24 +709,21 @@ function startStreamConnection(containerId, lsUrl, csrf, cascadeId, state) {
         state.status = busy ? 'busy' : 'idle';
       }
     } catch { }
-    pending = false;
   };
 
-  fetchAndCache();
+  const loop = async () => {
+    while (state._watcherRunning) {
+      await fetchAndCache();
+      const sinceLast = Date.now() - (state._restartedAt || 0);
+      let delay;
+      if (state.isBusy) delay = 300;
+      else if (sinceLast < 30000) delay = 500;
+      else delay = 3000;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  };
 
-  writeEnvelope.stdout.on('data', () => {
-    fetchAndCache();
-  });
-
-  writeEnvelope.on('close', () => {
-    console.log(`[GPI] Stream closed for cascade ${cascadeId.slice(0, 8)}`);
-    fetchAndCache();
-  });
-
-  writeEnvelope.on('error', () => { });
-
-  state._streamProcess = writeEnvelope;
-  return writeEnvelope;
+  loop().catch(() => { state._watcherRunning = false; });
 }
 
 export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
@@ -754,9 +732,6 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
   if (existing?._watcherRunning && existing?.cascadeId === cascadeId) return { ok: true, already: true };
   if (existing) {
     existing._watcherRunning = false;
-    if (existing._streamProcess) {
-      try { existing._streamProcess.kill(); } catch { }
-    }
   }
 
   const containerId = workspace.containerId;
@@ -773,12 +748,12 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
     return { ok: false, error: 'no_csrf_or_ls' };
   }
 
-  console.log(`[GPI] Starting stream watcher for cascade ${cascadeId.slice(0, 8)} on ${lsUrl}`);
+  console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)} on ${lsUrl}`);
 
-  const state = { _watcherRunning: true, cascadeId, isBusy: false, ts: 0 };
+  const state = { _watcherRunning: true, cascadeId, isBusy: false, ts: 0, _restartedAt: Date.now() };
   cascadeCache.set(key, state);
 
-  startStreamConnection(containerId, lsUrl, csrf, cascadeId, state);
+  startWatcherLoop(containerId, lsUrl, csrf, cascadeId, state);
   return { ok: true };
 }
 
@@ -787,21 +762,19 @@ export function gpiStopCascadeWatcher(workspace, targetId) {
   const state = cascadeCache.get(key);
   if (state) {
     state._watcherRunning = false;
-    if (state._streamProcess) {
-      try { state._streamProcess.kill(); } catch { }
-    }
   }
 }
 
 export async function gpiRestartCascadeWatcher(workspace, cascadeId, targetId) {
   const key = `${workspace._id}:${targetId || 'global'}`;
   const existing = cascadeCache.get(key);
+  if (existing?._watcherRunning && existing?.cascadeId === cascadeId) {
+    existing._restartedAt = Date.now();
+    return { ok: true, restarted: true };
+  }
   if (existing) {
     existing._watcherRunning = false;
     existing.cascadeId = null;
-    if (existing._streamProcess) {
-      try { existing._streamProcess.kill(); } catch { }
-    }
   }
   return gpiStartCascadeWatcher(workspace, cascadeId, targetId);
 }
