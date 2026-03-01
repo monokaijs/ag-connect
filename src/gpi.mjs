@@ -1,6 +1,7 @@
 import { cdpEvalOnPort, cdpEvalOnAllTargets, getTargetsOnPort, connectAndEval } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
 import { DEFAULT_MODEL_UID } from './config.mjs';
+import { execSync } from 'child_process';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -673,153 +674,70 @@ export async function gpiSendMessage(workspace, cascadeId, message, model, targe
   return gpiEval(workspace, buildSendExpr(cascadeId, message, model), targetId);
 }
 
-function buildStartWatcherExpr() {
-  return `(async () => {
-    try {
-      if (window.__gpiWatcherInstalled) return { ok: true, already: true };
-      window.__gpiWatcherInstalled = true;
-      window.__gpiCascade = null;
 
-      const origFetch = window.__origFetch || window.fetch;
-      const LS = '${LS_PREFIX}';
 
-      const fetchTrajectory = async (cid) => {
-        try {
-          const perf = performance.getEntriesByType('resource');
-          let lsUrl = null;
-          for (let i = perf.length - 1; i >= 0; i--) {
-            if (perf[i].name.includes('LanguageServerService')) {
-              lsUrl = new URL(perf[i].name).origin;
-              break;
-            }
-          }
-          if (!lsUrl) return null;
-          const csrf = window.__gpiCsrf;
-          if (!csrf) return null;
-          const headers = window.__gpiHeaders
-            ? { ...window.__gpiHeaders, 'content-type': 'application/json', 'x-codeium-csrf-token': csrf }
-            : { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': csrf };
-          const r = await origFetch(lsUrl + LS + '/GetCascadeTrajectory', {
-            method: 'POST', headers, body: JSON.stringify({ cascadeId: cid }),
-          });
-          return await r.json();
-        } catch { return null; }
-      };
+const cascadeCache = new Map();
 
-      const updateFromTrajectory = (data) => {
-        if (!data?.trajectory) return;
-        const steps = data.trajectory.steps || [];
-        const last = steps[steps.length - 1];
-        const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
-        window.__gpiCascade = {
-          cascadeId: data.trajectory.cascadeId,
-          data: data,
-          isBusy: busy,
-          ts: Date.now(),
-          status: busy ? 'busy' : 'idle',
-        };
-      };
-
-      window.fetch = async function(...args) {
-        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-        const res = await origFetch.apply(this, args);
-
-        if (url.includes(LS + '/GetCascadeTrajectory')) {
-          try {
-            const clone = res.clone();
-            clone.json().then(updateFromTrajectory).catch(() => {});
-          } catch {}
-        }
-
-        if (url.includes(LS + '/StartCascade')) {
-          try {
-            const clone = res.clone();
-            clone.json().then(data => {
-              if (data?.cascadeId) {
-                window.__gpiCascade = { cascadeId: data.cascadeId, isBusy: true, ts: Date.now(), status: 'started' };
-              }
-            }).catch(() => {});
-          } catch {}
-        }
-
-        if (url.includes(LS + '/SendUserCascadeMessage')) {
-          try {
-            const reqBody = args[1]?.body;
-            if (reqBody) {
-              const bodyStr = typeof reqBody === 'string' ? reqBody : new TextDecoder().decode(reqBody);
-              const parsed = JSON.parse(bodyStr);
-              if (parsed.cascadeId) {
-                window.__gpiCascade = { ...(window.__gpiCascade || {}), cascadeId: parsed.cascadeId, isBusy: true, ts: Date.now(), status: 'sending' };
-              }
-            }
-          } catch {}
-        }
-
-        if (url.includes(LS + '/StreamCascadeReactiveUpdates') && res.body) {
-          try {
-            const streamCascadeId = window.__gpiCascade?.cascadeId;
-
-            const [s1, s2] = res.body.tee();
-            const reader = s2.getReader();
-            let pending = false;
-            const pump = async () => {
-              try {
-                while (true) {
-                  const { done } = await reader.read();
-                  if (done) {
-                    if (streamCascadeId) {
-                      const traj = await fetchTrajectory(streamCascadeId);
-                      if (traj) updateFromTrajectory(traj);
-                    }
-                    break;
-                  }
-                  if (!pending && streamCascadeId) {
-                    pending = true;
-                    fetchTrajectory(streamCascadeId).then(traj => {
-                      if (traj) updateFromTrajectory(traj);
-                      pending = false;
-                    }).catch(() => { pending = false; });
-                  }
-                }
-              } catch {}
-            };
-            pump();
-            return new Response(s1, { headers: res.headers, status: res.status, statusText: res.statusText });
-          } catch {}
-        }
-
-        return res;
-      };
-
-      window.__origFetch = origFetch;
-      return { ok: true, installed: true };
-    } catch(e) {
-      return { ok: false, error: e.message };
-    }
-  })()`
+function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
+  const cmd = `docker exec ${containerId} curl -sk "${lsUrl}${LS_PREFIX}/${endpoint}" -H "content-type: application/json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" -d '${JSON.stringify(body)}' 2>/dev/null`;
+  try {
+    const out = execSync(cmd, { timeout: 5000 }).toString();
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
 }
 
 export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
-  const expr = buildStartWatcherExpr();
-  const result = await evalForWorkspace(workspace, expr, {
-    targetId,
-    target: 'workbench',
-    timeout: 10000,
-  });
-  console.log(`[GPI] Watcher install on target ${(targetId || 'global').slice(0, 8)}: ${JSON.stringify(result?.results?.[0]?.value || result).substring(0, 200)}`);
-  return result;
+  const key = `${workspace._id}:${targetId || 'global'}`;
+  const existing = cascadeCache.get(key);
+  if (existing?._watcherRunning && existing?.cascadeId === cascadeId) return { ok: true, already: true };
+  if (existing) existing._watcherRunning = false;
+
+  const containerId = workspace.containerId;
+  if (!containerId) return { ok: false, error: 'no_container' };
+
+  const csrf = workspace.gpi?.csrf;
+  const lsUrl = workspace.gpi?.lsUrl;
+  if (!csrf || !lsUrl) return { ok: false, error: 'no_csrf_or_ls' };
+
+  console.log(`[GPI] Starting watcher for cascade ${cascadeId.slice(0, 8)} via docker exec`);
+
+  const state = { _watcherRunning: true, cascadeId, isBusy: false, ts: 0 };
+  cascadeCache.set(key, state);
+
+  const poll = async () => {
+    while (state._watcherRunning) {
+      try {
+        const data = dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId: state.cascadeId });
+        if (data?.trajectory) {
+          const steps = data.trajectory.steps || [];
+          const last = steps[steps.length - 1];
+          const busy = last?.status === 'CORTEX_STEP_STATUS_RUNNING' || last?.status === 'CORTEX_STEP_STATUS_WAITING';
+          state.data = data;
+          state.isBusy = busy;
+          state.ts = Date.now();
+          state.status = busy ? 'busy' : 'idle';
+        }
+      } catch { }
+      const delay = state.isBusy ? 500 : 2000;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  };
+
+  poll().catch(() => { state._watcherRunning = false; });
+  return { ok: true };
 }
 
-export async function gpiReadCachedTrajectory(workspace, targetId) {
-  const expr = `(function(){ return window.__gpiCascade || null; })()`;
-  const result = await evalForWorkspace(workspace, expr, {
-    targetId,
-    target: 'workbench',
-    timeout: 3000,
-  });
-  if (!result.ok) return null;
-  const val = result.results?.[0]?.value;
-  return val || null;
+export function gpiStopCascadeWatcher(workspace, targetId) {
+  const key = `${workspace._id}:${targetId || 'global'}`;
+  const state = cascadeCache.get(key);
+  if (state) state._watcherRunning = false;
+}
+
+export function gpiReadCachedTrajectory(workspace, targetId) {
+  const key = `${workspace._id}:${targetId || 'global'}`;
+  return cascadeCache.get(key) || null;
 }
 
 export async function gpiGetTrajectory(workspace, cascadeId) {

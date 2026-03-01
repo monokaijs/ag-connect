@@ -150,7 +150,7 @@ class WorkspaceMonitor {
 
       let trajData = null;
       if (cachedTargetId) {
-        const cached = await gpiReadCachedTrajectory(this.workspace, cachedTargetId);
+        const cached = gpiReadCachedTrajectory(this.workspace, cachedTargetId);
         if (cached && cached.cascadeId === cascadeId && cached.data) {
           trajData = cached.data;
         }
@@ -227,7 +227,7 @@ class WorkspaceMonitor {
         for (const [tid, tcid] of targetCascades) {
           if (tcid === cascadeId) continue;
           try {
-            const cached = await gpiReadCachedTrajectory(this.workspace, tid);
+            const cached = gpiReadCachedTrajectory(this.workspace, tid);
             if (!cached || !cached.data) continue;
             const tData = trajectoryToConversation(cached.data);
             const tHash = `${tData.turnCount}:${tData.isBusy}:${tData.items.length}`;
