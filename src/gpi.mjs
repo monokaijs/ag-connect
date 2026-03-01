@@ -483,10 +483,16 @@ export async function gpiBootstrap(workspace) {
       const csrfMatch = psOutput.match(/--csrf_token\s+([a-f0-9-]+)/);
       const portMatch = psOutput.match(/--extension_server_port\s+(\d+)/);
       if (csrfMatch) {
-        const csrf = csrfMatch[1];
-        console.log(`[GPI] CLI ps aux discovered csrf=${csrf.substring(0, 8)}..`);
+        const lines = psOutput.split('\n').filter(l => l.includes('--csrf_token'));
+        const candidates = [];
+        for (const line of lines) {
+          const cm = line.match(/--csrf_token\s+([a-f0-9-]+)/);
+          const pm = line.match(/--grpc_server_port\s+(\d+)/);
+          if (cm) candidates.push({ csrf: cm[1], port: pm ? pm[1] : null });
+        }
+        console.log(`[GPI] Found ${candidates.length} CSRF candidates: ${candidates.map(c => c.csrf.substring(0, 8) + ':' + c.port).join(', ')}`);
 
-        const validateExpr = `(async () => {
+        const validateExpr = (tokens) => `(async () => {
           try {
             const perf = performance.getEntriesByType('resource');
             let lsUrl = null;
@@ -498,34 +504,33 @@ export async function gpiBootstrap(workspace) {
             }
             if (!lsUrl) return { ok: false, error: 'no_ls' };
             const origFetch = window.__origFetch || window.fetch;
-            const res = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': ${JSON.stringify(csrf)} },
-              body: '{}',
-            });
-            if (res.status === 200) {
-              window.__gpiCsrf = ${JSON.stringify(csrf)};
-              return { ok: true, csrf: ${JSON.stringify(csrf)} };
+            const candidates = ${JSON.stringify(tokens)};
+            for (const c of candidates) {
+              try {
+                const res = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': c.csrf },
+                  body: '{}',
+                });
+                if (res.status === 200) {
+                  window.__gpiCsrf = c.csrf;
+                  return { ok: true, csrf: c.csrf, source: 'validated', lsUrl };
+                }
+              } catch {}
             }
-            try {
-              await require('vscode').commands.executeCommand('windsurf.startCascade');
-            } catch {}
-            await new Promise(r => setTimeout(r, 2000));
-            if (window.__gpiCsrf && window.__gpiCsrf !== ${JSON.stringify(csrf)}) {
-              return { ok: true, csrf: window.__gpiCsrf, source: 'intercepted' };
-            }
-            return { ok: false, error: 'csrf_invalid', status: res.status };
+            if (window.__gpiCsrf) return { ok: true, csrf: window.__gpiCsrf, source: 'intercepted' };
+            return { ok: false, error: 'all_tokens_invalid', lsUrl, tried: candidates.length };
           } catch(e) {
             return { ok: false, error: e.message };
           }
         })()`;
-        const valResult = await evalForWorkspace(workspace, validateExpr, {
+        const valResult = await evalForWorkspace(workspace, validateExpr(candidates), {
           target: 'workbench',
           timeout: 15000,
         });
         const valBest = valResult.results?.find(r => r.value?.ok)?.value
           || valResult.results?.[0]?.value;
-        console.log(`[GPI] CSRF validation: ${JSON.stringify(valBest).substring(0, 200)}`);
+        console.log(`[GPI] CSRF validation: ${JSON.stringify(valBest).substring(0, 300)}`);
         if (valBest?.ok && valBest?.csrf) {
           return {
             ok: true,
