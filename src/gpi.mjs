@@ -256,18 +256,6 @@ function buildBootstrapExpr() {
       }
 
       if (!window.__gpiCsrf && lsUrl) {
-        try {
-          const probeRes = await origFetch(lsUrl + '/exa.language_server_pb.LanguageServerService/GetProcesses', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', 'connect-protocol-version': '1' },
-            body: '{}',
-          });
-          const csrfHeader = probeRes.headers.get('x-codeium-csrf-token');
-          if (csrfHeader) window.__gpiCsrf = csrfHeader;
-        } catch {}
-      }
-
-      if (!window.__gpiCsrf && lsUrl) {
         await new Promise(r => setTimeout(r, 200));
         try {
           const triggerBtn = document.querySelector('[data-testid="new-chat-button"]')
@@ -284,11 +272,13 @@ function buildBootstrapExpr() {
         await new Promise(r => setTimeout(r, 2000));
       }
 
+      const csrfSource = window.__gpiCsrf ? (window.__gpiHeaders ? 'interceptor' : 'trigger') : 'none';
       return {
         ok: !!window.__gpiCsrf,
         lsUrl: lsUrl || null,
         hasCsrf: !!window.__gpiCsrf,
         csrf: window.__gpiCsrf || null,
+        csrfSource,
         headers: window.__gpiHeaders || null,
         modelUid: window.__gpiModelUid || null,
         installed: true,
@@ -479,9 +469,7 @@ export async function gpiBootstrap(workspace) {
   const hasCsrf = result.results?.some(r => r.value?.csrf);
   if (hasCsrf) {
     const best = result.results.find(r => r.value?.csrf);
-    if (best.value?.headers) {
-      console.log(`[GPI] Intercepted headers: ${JSON.stringify(best.value.headers)}`);
-    }
+    console.log(`[GPI] Bootstrap found csrf from source=${best.value?.csrfSource}, headers=${JSON.stringify(best.value?.headers)?.substring(0, 300)}`);
     return { ...best.value, results: result.results };
   }
 
