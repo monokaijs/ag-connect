@@ -28,6 +28,7 @@ import {
   gpiGetAllTrajectories,
   gpiStartCascade,
   gpiCancelInvocation,
+  gpiRestartCascadeWatcher,
   trajectoryToConversation,
 } from './gpi.mjs';
 import { MODELS, getCachedQuota, setCachedQuota, getAllCachedQuotas } from './config.mjs';
@@ -479,6 +480,7 @@ function setupWorkspaceRoutes(app, broadcast) {
             payload: { id: req.params.id, targetId, ...busyPayload },
           });
         }
+        gpiRestartCascadeWatcher(workspace, cascadeId, targetId).catch(() => { });
       }
 
       res.json({ ok: result.ok, error, isBusy: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });

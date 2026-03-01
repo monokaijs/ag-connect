@@ -785,7 +785,25 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
 export function gpiStopCascadeWatcher(workspace, targetId) {
   const key = `${workspace._id}:${targetId || 'global'}`;
   const state = cascadeCache.get(key);
-  if (state) state._watcherRunning = false;
+  if (state) {
+    state._watcherRunning = false;
+    if (state._streamProcess) {
+      try { state._streamProcess.kill(); } catch { }
+    }
+  }
+}
+
+export async function gpiRestartCascadeWatcher(workspace, cascadeId, targetId) {
+  const key = `${workspace._id}:${targetId || 'global'}`;
+  const existing = cascadeCache.get(key);
+  if (existing) {
+    existing._watcherRunning = false;
+    existing.cascadeId = null;
+    if (existing._streamProcess) {
+      try { existing._streamProcess.kill(); } catch { }
+    }
+  }
+  return gpiStartCascadeWatcher(workspace, cascadeId, targetId);
 }
 
 export function gpiReadCachedTrajectory(workspace, targetId) {
