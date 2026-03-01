@@ -677,7 +677,7 @@ export async function gpiGetTrajectory(workspace, cascadeId) {
   const expr = buildGetTrajectoryExpr(cascadeId);
   const result = await evalForWorkspace(workspace, expr, {
     target: 'workbench',
-    timeout: 15000,
+    timeout: 5000,
     allTargets: true,
   });
   if (!result.ok) return result;
@@ -689,7 +689,7 @@ export async function gpiGetAllTrajectories(workspace) {
   const expr = buildGetAllTrajectoriesExpr();
   const result = await evalForWorkspace(workspace, expr, {
     target: 'workbench',
-    timeout: 15000,
+    timeout: 5000,
     allTargets: true,
   });
   if (!result.ok) return result;

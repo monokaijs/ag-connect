@@ -115,13 +115,11 @@ async function cdpEvalOnAllTargets(port, expression, opts = {}) {
     !t.title?.toLowerCase().includes('launchpad') &&
     t.wsUrl
   );
-  const allResults = [];
-  for (const t of workbenchTargets) {
-    try {
-      const results = await connectAndEval(t.wsUrl, expression, opts.timeout || 10000, true);
-      allResults.push(...results);
-    } catch { }
-  }
+  const promises = workbenchTargets.map(t =>
+    connectAndEval(t.wsUrl, expression, opts.timeout || 10000, true).catch(() => [])
+  );
+  const settled = await Promise.all(promises);
+  const allResults = settled.flat();
   return { ok: true, results: allResults };
 }
 
