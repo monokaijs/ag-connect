@@ -3,6 +3,7 @@ import {
   gpiBootstrap,
   gpiGetTrajectory,
   gpiGetAllTrajectories,
+  gpiReadCachedTrajectory,
   trajectoryToConversation,
 } from './gpi.mjs';
 import { getTargetsOnPort, getTargetWorkspaceFolders, connectAndEval, FOLDER_EXPR } from './workspace-cdp.mjs';
@@ -127,14 +128,33 @@ class WorkspaceMonitor {
         this._lastCascadeId = cascadeId;
       }
 
-      const result = await gpiGetTrajectory(this.workspace, cascadeId);
-      if (!result.ok) {
-        this.polling = false;
-        this.schedulePoll();
-        return;
+      let cachedTargetId = null;
+      const tc = this.workspace.targetCascades;
+      if (tc) {
+        for (const [tid, tcid] of tc) {
+          if (tcid === cascadeId) { cachedTargetId = tid; break; }
+        }
       }
 
-      const data = trajectoryToConversation(result.data);
+      let trajData = null;
+      if (cachedTargetId) {
+        const cached = await gpiReadCachedTrajectory(this.workspace, cachedTargetId);
+        if (cached && cached.cascadeId === cascadeId && cached.data && (Date.now() - cached.ts) < 30000) {
+          trajData = cached.data;
+        }
+      }
+
+      if (!trajData) {
+        const result = await gpiGetTrajectory(this.workspace, cascadeId);
+        if (!result.ok) {
+          this.polling = false;
+          this.schedulePoll();
+          return;
+        }
+        trajData = result.data;
+      }
+
+      const data = trajectoryToConversation(trajData);
 
       const wasBusy = this.isBusy;
       this.isBusy = data.isBusy;
