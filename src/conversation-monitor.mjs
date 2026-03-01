@@ -174,6 +174,9 @@ class WorkspaceMonitor {
       }
 
       if (!trajData) {
+        if (this.pollCount % 10 === 1) {
+          console.log(`[Monitor] No cached traj for ${cascadeId.slice(0, 8)} targetId=${cachedTargetId?.slice(0, 8)} wsId=${this.wsId}`);
+        }
         this.polling = false;
         this.schedulePoll();
         return;
