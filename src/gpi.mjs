@@ -109,13 +109,12 @@ function buildFetchExpr(endpoint, body) {
       }
 
       const origFetch = window.__origFetch || window.fetch;
+      const headers = window.__gpiHeaders
+        ? { ...window.__gpiHeaders, 'content-type': 'application/json', 'x-codeium-csrf-token': csrf }
+        : { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': csrf };
       const res = await origFetch(lsUrl + '${LS_PREFIX}/${endpoint}', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'connect-protocol-version': '1',
-          'x-codeium-csrf-token': csrf,
-        },
+        headers,
         body: ${JSON.stringify(jsonBody)},
       });
 
@@ -186,13 +185,12 @@ function buildSendExpr(cascadeId, message, model) {
       const origFetch = window.__origFetch || window.fetch;
       const parsed = JSON.parse(${JSON.stringify(JSON.stringify(body))});
 
+      const headers = window.__gpiHeaders
+        ? { ...window.__gpiHeaders, 'content-type': 'application/json', 'x-codeium-csrf-token': csrf }
+        : { 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-codeium-csrf-token': csrf };
       const res = await origFetch(lsUrl + '${LS_PREFIX}/SendUserCascadeMessage', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'connect-protocol-version': '1',
-          'x-codeium-csrf-token': csrf,
-        },
+        headers,
         body: JSON.stringify(parsed),
       });
       const data = await res.json().catch(() => null);
@@ -224,7 +222,13 @@ function buildBootstrapExpr() {
         if (url.includes('LanguageServerService')) {
           const h = opts.headers || {};
           const c = h['x-codeium-csrf-token'];
-          if (c) window.__gpiCsrf = c;
+          if (c) {
+            window.__gpiCsrf = c;
+            window.__gpiHeaders = {};
+            for (const [k, v] of Object.entries(h)) {
+              window.__gpiHeaders[k] = v;
+            }
+          }
           if (url.includes('SendUserCascadeMessage') || url.includes('StartCascade')) {
             if (opts.body) {
               try {
@@ -285,6 +289,7 @@ function buildBootstrapExpr() {
         lsUrl: lsUrl || null,
         hasCsrf: !!window.__gpiCsrf,
         csrf: window.__gpiCsrf || null,
+        headers: window.__gpiHeaders || null,
         modelUid: window.__gpiModelUid || null,
         installed: true,
       };
@@ -474,6 +479,9 @@ export async function gpiBootstrap(workspace) {
   const hasCsrf = result.results?.some(r => r.value?.csrf);
   if (hasCsrf) {
     const best = result.results.find(r => r.value?.csrf);
+    if (best.value?.headers) {
+      console.log(`[GPI] Intercepted headers: ${JSON.stringify(best.value.headers)}`);
+    }
     return { ...best.value, results: result.results };
   }
 
