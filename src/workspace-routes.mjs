@@ -464,6 +464,8 @@ function setupWorkspaceRoutes(app, broadcast) {
       }
       console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
 
+      gpiRestartCascadeWatcher(workspace, cascadeId, targetId).catch(() => { });
+
       const result = await gpiSendMessage(workspace, cascadeId, text, modelUid || workspace.gpi?.selectedModelUid, targetId);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
       const error = result?.data?.message || result?.error || undefined;
@@ -480,7 +482,6 @@ function setupWorkspaceRoutes(app, broadcast) {
             payload: { id: req.params.id, targetId, ...busyPayload },
           });
         }
-        gpiRestartCascadeWatcher(workspace, cascadeId, targetId).catch(() => { });
       }
 
       res.json({ ok: result.ok, error, isBusy: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
