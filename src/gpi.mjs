@@ -1,7 +1,7 @@
 import { cdpEvalOnPort, cdpEvalOnAllTargets, getTargetsOnPort, connectAndEval } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
 import { DEFAULT_MODEL_UID } from './config.mjs';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
 
 const LS_PREFIX = '/exa.language_server_pb.LanguageServerService';
 
@@ -687,12 +687,12 @@ const cascadeCache = new Map();
 
 function dockerExecFetch(containerId, lsUrl, csrf, endpoint, body) {
   const cmd = `docker exec ${containerId} curl -sk "${lsUrl}${LS_PREFIX}/${endpoint}" -H "content-type: application/json" -H "connect-protocol-version: 1" -H "x-codeium-csrf-token: ${csrf}" -d '${JSON.stringify(body)}' 2>/dev/null`;
-  try {
-    const out = execSync(cmd, { timeout: 5000 }).toString();
-    return JSON.parse(out);
-  } catch {
-    return null;
-  }
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: 5000 }, (err, stdout) => {
+      if (err || !stdout) return resolve(null);
+      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
+    });
+  });
 }
 
 export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
@@ -723,7 +723,7 @@ export async function gpiStartCascadeWatcher(workspace, cascadeId, targetId) {
   const poll = async () => {
     while (state._watcherRunning) {
       try {
-        const data = dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId: state.cascadeId });
+        const data = await dockerExecFetch(containerId, lsUrl, csrf, 'GetCascadeTrajectory', { cascadeId: state.cascadeId });
         if (data?.trajectory) {
           const steps = data.trajectory.steps || [];
           const last = steps[steps.length - 1];
