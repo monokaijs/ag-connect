@@ -449,7 +449,7 @@ function setupWorkspaceRoutes(app, broadcast) {
 
       if (!cascadeId) {
         console.log(`[Send] No active cascade, starting new one...`);
-        const newChat = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid);
+        const newChat = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid, targetId);
         console.log('[Send] StartCascade result:', JSON.stringify(newChat).substring(0, 300));
         if (newChat.ok && newChat.data?.cascadeId) {
           cascadeId = newChat.data.cascadeId;
@@ -462,7 +462,7 @@ function setupWorkspaceRoutes(app, broadcast) {
       }
       console.log(`[Send] Using cascade ${cascadeId?.substring(0, 12)}`);
 
-      const result = await gpiSendMessage(workspace, cascadeId, text, workspace.gpi?.selectedModelUid);
+      const result = await gpiSendMessage(workspace, cascadeId, text, workspace.gpi?.selectedModelUid, targetId);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
       const error = result?.data?.message || result?.error || undefined;
       res.json({ ok: result.ok, error, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
@@ -548,7 +548,7 @@ function setupWorkspaceRoutes(app, broadcast) {
     if (!workspace) return res.status(404).json({ error: 'Not found' });
     const { targetId } = req.body;
     try {
-      const result = await gpiStartCascade(workspace);
+      const result = await gpiStartCascade(workspace, workspace.gpi?.selectedModelUid, targetId);
       if (result.ok && result.data?.cascadeId) {
         const update = {
           'gpi.activeCascadeId': result.data.cascadeId,

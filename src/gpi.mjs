@@ -1,4 +1,4 @@
-import { cdpEvalOnPort, cdpEvalOnAllTargets } from './workspace-cdp.mjs';
+import { cdpEvalOnPort, cdpEvalOnAllTargets, getTargetsOnPort, connectAndEval } from './workspace-cdp.mjs';
 import { cliCdpEval, cliExec } from './cli-ws.mjs';
 import { DEFAULT_MODEL_UID } from './config.mjs';
 
@@ -413,14 +413,15 @@ async function evalForWorkspace(workspace, expression, opts = {}) {
       timeout: opts.timeout || 15000,
     });
   }
+  const target = opts.targetId ? { id: opts.targetId } : (opts.target || 'workbench');
   return cdpEvalOnPort(port, expression, {
-    target: opts.target || 'workbench',
+    target,
     host: workspace.cdpHost,
     timeout: opts.timeout || 15000,
   });
 }
 
-async function gpiEval(workspace, expression) {
+async function gpiEval(workspace, expression, targetId) {
   const pickBest = (results) => {
     if (!results?.length) return null;
     return results.find(r => r.value?.ok === true)?.value
@@ -431,6 +432,7 @@ async function gpiEval(workspace, expression) {
 
   const result = await evalForWorkspace(workspace, expression, {
     target: 'workbench',
+    targetId,
     timeout: 15000,
   });
   if (!result.ok) return result;
@@ -448,6 +450,7 @@ async function gpiEval(workspace, expression) {
       console.log(`[GPI] Re-bootstrap ok, csrf=${bootstrap.csrf.substring(0, 8)}..`);
       const retry = await evalForWorkspace(workspace, expression, {
         target: 'workbench',
+        targetId,
         timeout: 15000,
       });
       if (!retry.ok) return retry;
@@ -596,7 +599,6 @@ export async function gpiBootstrap(workspace) {
         if (c.extensionCsrf) allTokens.push(c.extensionCsrf);
       }
       const uniqueTokens = [...new Set(allTokens)];
-      console.log(`[GPI] Trying ${uniqueTokens.length} tokens against lsUrl=${lsUrl}`);
 
       const validateExpr = `(async () => {
         try {
@@ -631,23 +633,30 @@ export async function gpiBootstrap(workspace) {
         }
       })()`;
 
-      const valResult = await cdpEvalOnPort(port, validateExpr, {
-        target: 'workbench',
-        host: workspace.cdpHost,
-        timeout: 20000,
-      });
-      const valBest = valResult.results?.find(r => r.value?.ok)?.value
-        || valResult.results?.[0]?.value;
-      console.log(`[GPI] Docker CSRF validation: ${JSON.stringify(valBest).substring(0, 300)}`);
+      const allTargets = await getTargetsOnPort(port, workspace.cdpHost);
+      const workbenchTargets = allTargets.filter(t =>
+        (t.type === 'page' || t.type === 'app') &&
+        t.url?.includes('workbench') &&
+        !t.title?.toLowerCase().includes('launchpad') &&
+        t.wsUrl
+      );
 
-      if (valBest?.ok && valBest?.csrf) {
-        await cdpEvalOnAllTargets(port, `window.__gpiCsrf = ${JSON.stringify(valBest.csrf)}`, {
-          host: workspace.cdpHost,
-          timeout: 5000,
-        });
+      let foundCsrf = null;
+      for (const t of workbenchTargets) {
+        try {
+          const results = await connectAndEval(t.wsUrl, validateExpr, 15000);
+          const val = results?.[0]?.value;
+          if (val?.ok && val?.csrf) {
+            console.log(`[GPI] Target ${t.id.substring(0, 8)} -> csrf=${val.csrf.substring(0, 8)} lsUrl=${val.lsUrl}`);
+            if (!foundCsrf) foundCsrf = val.csrf;
+          }
+        } catch { }
+      }
+
+      if (foundCsrf) {
         return {
           ok: true,
-          csrf: valBest.csrf,
+          csrf: foundCsrf,
           lsUrl,
           hasCsrf: true,
           installed: true,
@@ -660,8 +669,8 @@ export async function gpiBootstrap(workspace) {
   return { ...best?.value, results: result.results, ok: false };
 }
 
-export async function gpiSendMessage(workspace, cascadeId, message, model) {
-  return gpiEval(workspace, buildSendExpr(cascadeId, message, model));
+export async function gpiSendMessage(workspace, cascadeId, message, model, targetId) {
+  return gpiEval(workspace, buildSendExpr(cascadeId, message, model), targetId);
 }
 
 export async function gpiGetTrajectory(workspace, cascadeId) {
@@ -672,8 +681,8 @@ export async function gpiGetAllTrajectories(workspace) {
   return gpiEval(workspace, buildGetAllTrajectoriesExpr());
 }
 
-export async function gpiStartCascade(workspace, modelUid) {
-  return gpiEval(workspace, buildStartCascadeExpr(modelUid));
+export async function gpiStartCascade(workspace, modelUid, targetId) {
+  return gpiEval(workspace, buildStartCascadeExpr(modelUid), targetId);
 }
 
 export async function gpiDiscoverModelUid(workspace) {
