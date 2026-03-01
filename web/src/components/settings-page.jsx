@@ -688,6 +688,10 @@ export default function SettingsPage({ auth, push }) {
             </div>
           )}
         </div>
+
+        <div className="mt-4 pt-4 border-t border-white/5 pb-6 text-center">
+          <p className="text-[11px] text-zinc-600">AG Connect v{__APP_VERSION__}</p>
+        </div>
       </div>
     </div >
   );
