@@ -120,7 +120,7 @@ function buildFetchExpr(endpoint, body) {
       });
 
       const data = await res.json().catch(() => null);
-      return { ok: res.status === 200, status: res.status, data };
+      return { ok: res.status === 200, status: res.status, data, _csrf: csrf.substring(0, 8), _lsUrl: lsUrl };
     } catch(e) {
       return { ok: false, error: e.message };
     }
@@ -429,13 +429,18 @@ async function gpiEval(workspace, expression) {
     const reason = val?.error === 'no_csrf' ? 'missing' : 'stale';
     console.log(`[GPI] CSRF ${reason}, auto-bootstrapping...`);
     const bootstrap = await gpiBootstrap(workspace);
+    console.log(`[GPI] Re-bootstrap result: csrf=${bootstrap?.csrf?.substring(0, 8)}.. ok=${bootstrap?.ok}`);
     if (bootstrap?.csrf) {
       const retry = await evalForWorkspace(workspace, expression, {
         target: 'workbench',
         timeout: 15000,
       });
       if (!retry.ok) return retry;
-      return pickBest(retry.results) || { ok: false, error: 'no_result_after_retry' };
+      const retryVal = pickBest(retry.results);
+      if (retryVal && !retryVal.ok) {
+        console.log(`[GPI] Retry after re-bootstrap still failed: status=${retryVal.status} error=${retryVal.error} data=${JSON.stringify(retryVal.data).substring(0, 200)}`);
+      }
+      return retryVal || { ok: false, error: 'no_result_after_retry' };
     }
     return val;
   }
@@ -469,6 +474,7 @@ export async function gpiBootstrap(workspace) {
       const portMatch = psOutput.match(/--extension_server_port\s+(\d+)/);
       if (csrfMatch) {
         const csrf = csrfMatch[1];
+        console.log(`[GPI] CLI ps aux discovered csrf=${csrf.substring(0, 8)}..`);
         await evalForWorkspace(workspace, `window.__gpiCsrf = ${JSON.stringify(csrf)}`, {
           target: 'workbench',
           timeout: 5000,
