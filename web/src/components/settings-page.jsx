@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu, Lock, Wand2, Copy, Check, Shield, Box, Play, Square, RotateCw, Pencil } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, Upload, LogOut, User, Bell, Server, Flame, CheckCircle2, XCircle, FolderOpen, HardDrive, LogIn, Menu, Lock, Wand2, Copy, Check, Shield, Box, Play, Square, RotateCw, Pencil, Download } from 'lucide-react';
 import { getApiBase, getServerEndpoint, setServerEndpoint } from '../config';
 import { getAuthHeaders } from '../hooks/use-auth';
 import { isNative } from '@/lib/capacitor';
@@ -336,6 +336,37 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
     navigator.clipboard.writeText(text);
     setCopiedPub(id);
     setTimeout(() => setCopiedPub(null), 2000);
+  };
+
+  const [copiedPriv, setCopiedPriv] = useState(null);
+
+  const fetchFullKey = async (id) => {
+    const res = await authFetch(`${getApiBase()}/api/settings/ssh-keys/${id}`);
+    return res.json();
+  };
+
+  const copyPrivateKey = async (id) => {
+    try {
+      const data = await fetchFullKey(id);
+      navigator.clipboard.writeText(data.privateKey);
+      setCopiedPriv(id);
+      setTimeout(() => setCopiedPriv(null), 2000);
+    } catch { }
+  };
+
+  const downloadKey = async (id, name, type) => {
+    try {
+      const data = await fetchFullKey(id);
+      const content = type === 'private' ? data.privateKey : data.publicKey;
+      if (!content) return;
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = type === 'private' ? name : `${name}.pub`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { }
   };
 
   const wsAction = async (id, action) => {
@@ -927,32 +958,50 @@ export default function SettingsPage({ auth, push, onOpenMobileNav }) {
             ) : (
               <div className="space-y-1.5">
                 {keys.map(key => (
-                  <div key={key._id} className="flex items-center justify-between bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Key className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium text-white truncate">{key.name}</div>
-                        <div className="text-[10px] text-zinc-500 truncate mt-0.5">
-                          {key.publicKey ? key.publicKey.slice(0, 60) + '...' : 'Private key only'}
+                  <div key={key._id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2.5 group">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Key className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-white truncate">{key.name}</div>
+                          <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+                            {key.publicKey ? key.publicKey.slice(0, 60) + '...' : 'Private key only'}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {key.publicKey && (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {key.publicKey && (
+                          <button
+                            onClick={() => copyPubKey(key._id, key.publicKey)}
+                            className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-emerald-400 transition-all p-1"
+                            title="Copy public key"
+                          >
+                            {copiedPub === key._id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        {key.hasPrivateKey && (
+                          <button
+                            onClick={() => copyPrivateKey(key._id)}
+                            className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-amber-400 transition-all p-1"
+                            title="Copy private key"
+                          >
+                            {copiedPriv === key._id ? <Check className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         <button
-                          onClick={() => copyPubKey(key._id, key.publicKey)}
-                          className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-emerald-400 transition-all p-1"
-                          title="Copy public key"
+                          onClick={() => downloadKey(key._id, key.name, 'private')}
+                          className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-indigo-400 transition-all p-1"
+                          title="Download key"
                         >
-                          {copiedPub === key._id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          <Download className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                      <button
-                        onClick={() => deleteKey(key._id)}
-                        className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          onClick={() => deleteKey(key._id)}
+                          className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}

@@ -190,6 +190,21 @@ function setupSettingsRoutes(app, broadcast) {
     }
   });
 
+  app.get('/api/settings/ssh-keys/:id', async (req, res) => {
+    try {
+      const key = await SshKey.findById(req.params.id);
+      if (!key) return res.status(404).json({ error: 'Not found' });
+      res.json({
+        _id: key._id,
+        name: key.name,
+        privateKey: key.privateKey,
+        publicKey: key.publicKey,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/settings/ssh-keys', async (req, res) => {
     try {
       const { name, privateKey, publicKey } = req.body;
