@@ -466,7 +466,22 @@ function setupWorkspaceRoutes(app, broadcast) {
       const result = await gpiSendMessage(workspace, cascadeId, text, modelUid || workspace.gpi?.selectedModelUid, targetId);
       console.log(`[Send] Result:`, JSON.stringify(result).substring(0, 500));
       const error = result?.data?.message || result?.error || undefined;
-      res.json({ ok: result.ok, error, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
+
+      if (result.ok) {
+        const busyPayload = { isBusy: true, statusText: 'Generating...' };
+        broadcast({
+          event: 'conversation:update',
+          payload: { id: req.params.id, ...busyPayload },
+        });
+        if (targetId) {
+          broadcast({
+            event: 'conversation:update',
+            payload: { id: req.params.id, targetId, ...busyPayload },
+          });
+        }
+      }
+
+      res.json({ ok: result.ok, error, isBusy: result.ok, results: [{ value: { ok: result.ok, method: 'gpi' } }] });
     } catch (err) {
       console.error(`[Send] Error:`, err.message);
       res.status(500).json({ error: err.message });
